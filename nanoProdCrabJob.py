@@ -70,7 +70,7 @@ def getFilePath(file):
     return file_name
   raise RuntimeError(f"Unable to find {file}")
 
-def runJob(cmsDriver_out, final_out, run_cmsDriver=True, run_skim=None, store_failed=None):
+def runJob(cmsDriver_out, final_out, run_cmsDriver=True, run_skim=None, store_failed=None, add_pnet=True):
 
   pset_path = 'PSet.py'
   if not os.path.exists(pset_path):
@@ -101,6 +101,18 @@ def runJob(cmsDriver_out, final_out, run_cmsDriver=True, run_skim=None, store_fa
       #'--customise_commands', 'process.Timing = cms.Service("Timing", summaryOnly=cms.untracked.bool(True))',
     ]
 
+    if add_pnet: # Manually add PNet info into cmsRun config
+      pnet_sed_orig = 'process.schedule = cms.Schedule(process.nanoAOD_step,process.endjob_step,process.NANOAODSIMoutput_step)'
+      pnetfile_path = 'PNetCodeForCmsRun.py'
+      if not os.path.exists(pnetfile_path):
+        pnetfile_path = os.path.join(os.getenv("CMSSW_BASE"), 'src', 'NanoProd', 'NanoProd', 'data', 'PNetCodeForCmsRun.py')
+      if not os.path.exists(pnetfile_path):
+        raise RuntimeError("Cannot find path to PNetCodeForCmsRun.py.")
+      with open(pnetfile_path) as pnetfile:
+        pnet_sed_replace = [line.replace('\n', '\\n').replace("'", "\'").replace("/", "\/") for line in pnetfile]
+      pnet_sed = "s/" + pnet_sed_orig + "/" + ''.join(pnet_sed_replace) + "/"
+      pnet_cmd = [ 'sed', '-i', pnet_sed, 'nano_NANO.py' ]
+
     cmssw_cmd = [ 'cmsRun',  '-j', _cmssw_report, 'nano_NANO.py' ]
 
     customise = p.exParams.customisationFunction.value()
@@ -119,6 +131,7 @@ def runJob(cmsDriver_out, final_out, run_cmsDriver=True, run_skim=None, store_fa
       cmd = [ c for c in cmd_base ]
       cmd.extend(['--filein', ','.join(input_remote_files)])
       sh_call(cmd, verbose=1)
+      if add_pnet: sh_call(pnet_cmd, verbose=1)
       sh_call(cmssw_cmd, verbose=1)
       success = True
     except ShCallError as e:
@@ -206,6 +219,8 @@ if __name__ == "__main__":
         kwargs['run_skim'] = sys.argv[4] == 'True'
       if len(sys.argv) > 5:
         kwargs['store_failed'] = sys.argv[5] == 'True'
+      if len(sys.argv) > 6:
+        kwargs['add_pnet'] = sys.argv[6] == 'True'
     else:
       cmsDriver_out = 'nanoOrig.root'
       final_out = 'nano.root'
