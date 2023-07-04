@@ -57,7 +57,7 @@ if options.era.startswith('Run2'):
 elif options.era.startswith('Run3'):
   cond_data = '124X_dataRun3_Prompt_v10'
   era_str = 'Run3'
-  era_mod = ''
+  era_mod = ',run3_nanoAOD_124'
 else:
   raise RuntimeError(f'Unknown era = "{options.era}"')
 
