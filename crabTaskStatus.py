@@ -49,6 +49,7 @@ class JobStatus(Enum):
   failed = 6
   transferring = 7
   killed = 8
+  held = 9
 
 class CrabWarning:
   known_warnings = {
