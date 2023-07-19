@@ -46,8 +46,8 @@ cond_mc = {
   'Run2_2016': 'auto:run2_mc',
   'Run2_2017': 'auto:phase1_2017_realistic',
   'Run2_2018': 'auto:phase1_2018_realistic',
-  'Run3_2022': '124X_mcRun3_2022_realistic_v12',
-  'Run3_2022_postEE': '124X_mcRun3_2022_realistic_postEE_v1',
+  'Run3_2022': '126X_mcRun3_2022_realistic_v2',
+  'Run3_2022_postEE': '126X_mcRun3_2022_realistic_postEE_v1',
 }
 
 if options.era.startswith('Run2'):
