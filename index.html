@@ -10,7 +10,9 @@
       
       
       
-      <link rel="icon" href="/assets/cat_square_favicon.ico">
+        <link rel="next" href="crabOverseer/">
+      
+      <link rel="icon" href="assets/cat_square_favicon.ico">
       <meta name="generator" content="mkdocs-1.4.3, mkdocs-material-9.1.21">
     
     
@@ -19,7 +21,7 @@
       
     
     
-      <link rel="stylesheet" href="/assets/stylesheets/main.eebd395e.min.css">
+      <link rel="stylesheet" href="assets/stylesheets/main.eebd395e.min.css">
       
       
 
@@ -29,9 +31,9 @@
       
     
     
-      <link rel="stylesheet" href="/stylesheets/fonts.css">
+      <link rel="stylesheet" href="stylesheets/fonts.css">
     
-    <script>__md_scope=new URL("/",location),__md_hash=e=>[...e].reduce((e,_)=>(e<<5)-e+_.charCodeAt(0),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL(".",location),__md_hash=e=>[...e].reduce((e,_)=>(e<<5)-e+_.charCodeAt(0),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -52,6 +54,11 @@
     <label class="md-overlay" for="__drawer"></label>
     <div data-md-component="skip">
       
+        
+        <a href="#runkit" class="md-skip">
+          Skip to content
+        </a>
+      
     </div>
     <div data-md-component="announce">
       
@@ -64,9 +71,9 @@
 
 <header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="/." title="RunKit" class="md-header__button md-logo" aria-label="RunKit" data-md-component="logo">
+    <a href="." title="RunKit" class="md-header__button md-logo" aria-label="RunKit" data-md-component="logo">
       
-  <img src="/assets/cat_square_small.jpg" alt="logo">
+  <img src="assets/cat_square_small.jpg" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -82,7 +89,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              
+              Home
             
           </span>
         </div>
@@ -154,10 +161,12 @@
         
   
   
+    
+  
 
 
   <li class="md-tabs__item">
-    <a href="/." class="md-tabs__link">
+    <a href="." class="md-tabs__link md-tabs__link--active">
       Home
     </a>
   </li>
@@ -169,7 +178,7 @@
 
 
   <li class="md-tabs__item">
-    <a href="/crabOverseer/" class="md-tabs__link">
+    <a href="crabOverseer/" class="md-tabs__link">
       crabOverseer
     </a>
   </li>
@@ -181,7 +190,7 @@
 
 
   <li class="md-tabs__item">
-    <a href="/skim_tree/" class="md-tabs__link">
+    <a href="skim_tree/" class="md-tabs__link">
       skim_tree
     </a>
   </li>
@@ -193,7 +202,7 @@
 
 
   <li class="md-tabs__item">
-    <a href="/otherTools/" class="md-tabs__link">
+    <a href="otherTools/" class="md-tabs__link">
       Other tools
     </a>
   </li>
@@ -226,9 +235,9 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="/." title="RunKit" class="md-nav__button md-logo" aria-label="RunKit" data-md-component="logo">
+    <a href="." title="RunKit" class="md-nav__button md-logo" aria-label="RunKit" data-md-component="logo">
       
-  <img src="/assets/cat_square_small.jpg" alt="logo">
+  <img src="assets/cat_square_small.jpg" alt="logo">
 
     </a>
     RunKit
@@ -254,11 +263,52 @@
 
   
   
+    
   
-    <li class="md-nav__item">
-      <a href="/." class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          Home
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="." class="md-nav__link md-nav__link--active">
         Home
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#tools" class="md-nav__link">
+    Tools:
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -271,7 +321,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/crabOverseer/" class="md-nav__link">
+      <a href="crabOverseer/" class="md-nav__link">
         crabOverseer
       </a>
     </li>
@@ -286,7 +336,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/skim_tree/" class="md-nav__link">
+      <a href="skim_tree/" class="md-nav__link">
         skim_tree
       </a>
     </li>
@@ -301,7 +351,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/otherTools/" class="md-nav__link">
+      <a href="otherTools/" class="md-nav__link">
         Other tools
       </a>
     </li>
@@ -325,6 +375,23 @@
   
   
   
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#tools" class="md-nav__link">
+    Tools:
+  </a>
+  
+</li>
+      
+    </ul>
   
 </nav>
                   </div>
@@ -336,8 +403,49 @@
             <div class="md-content" data-md-component="content">
               <article class="md-content__inner md-typeset">
                 
-  <h1>404 - Not found</h1>
+                  
 
+  
+    <a href="https://github.com/kandrosov/RunKit/edit/master/docs/index.md" title="Edit this page" class="md-content__button md-icon">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4v-2m10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1 2.1 2.1Z"/></svg>
+    </a>
+  
+  
+    
+      
+    
+    <a href="https://github.com/kandrosov/RunKit/raw/master/docs/index.md" title="View source of this page" class="md-content__button md-icon">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 18c.56 0 1 .44 1 1s-.44 1-1 1-1-.44-1-1 .44-1 1-1m0-3c-2.73 0-5.06 1.66-6 4 .94 2.34 3.27 4 6 4s5.06-1.66 6-4c-.94-2.34-3.27-4-6-4m0 6.5a2.5 2.5 0 0 1-2.5-2.5 2.5 2.5 0 0 1 2.5-2.5 2.5 2.5 0 0 1 2.5 2.5 2.5 2.5 0 0 1-2.5 2.5M9.27 20H6V4h7v5h5v4.07c.7.08 1.36.25 2 .49V8l-6-6H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h4.5a8.15 8.15 0 0 1-1.23-2Z"/></svg>
+    </a>
+  
+
+
+<h1 id="runkit">RunKit<a class="headerlink" href="#runkit" title="Permanent link">&para;</a></h1>
+<p>RunKit is a toolkit to simplify root-tuple production and job submission within the CMS infrastructure.</p>
+<h2 id="tools">Tools:<a class="headerlink" href="#tools" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="crabOverseer/">crabOverseer.py</a>: a tool to manage CRAB tasks and the following post-processing steps.</li>
+<li><a href="skim_tree/">skim_tree.py</a>: a tool to skim a TTree content into a new root file</li>
+<li><a href="otherTools/">checkDatasetExistance.py</a>: check that dataset exists in DAS</li>
+<li><a href="otherTools/">checkRootFile.py</a>: check that root file is not corrupted</li>
+<li><a href="otherTools/">cmsEnv.sh</a>: run command line within the CMSSW environment</li>
+<li><a href="otherTools/">envToJson.py</a>: convert environment to json</li>
+<li><a href="otherTools/">CreateVomsProxy</a>: LAW task to create a VOMS proxy</li>
+<li><a href="otherTools/">haddnano.py</a>: hadd nanoAOD files (original code is copied from nanoAOD-tools)</li>
+<li><a href="otherTools/">haddnanoEx.py</a>: hadd nanoAOD files with an extended functionality</li>
+<li><a href="otherTools/">includeCMSSWlibs.py</a>: load some CMSSW libraries to be used with standalone ROOT</li>
+<li><a href="otherTools/">inspectNanoFile.py</a>: inspect nanoAOD file (original code is copied from CMS software)</li>
+<li><a href="otherTools/">sh_tools.py</a>: a set of common tools to run sub-processes, copy remote files, ...</li>
+<li><a href="otherTools/">xsdb_search.py</a>: search sample cross-section in XSDB (original code is copied from CMS software)</li>
+</ul>
+
+
+
+
+
+                
               </article>
             </div>
           
@@ -353,6 +461,27 @@
       
         <footer class="md-footer">
   
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+        
+          
+          <a href="crabOverseer/" class="md-footer__link md-footer__link--next" aria-label="Next: crabOverseer" rel="next">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                crabOverseer
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4Z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
     
   
   <div class="md-footer-meta md-typeset">
@@ -376,10 +505,10 @@
       <div class="md-dialog__inner md-typeset"></div>
     </div>
     
-    <script id="__config" type="application/json">{"base": "/", "features": ["content.action.edit", "content.action.view", "navigation.expand", "navigation.footer", "navigation.indexes", "navigation.sections", "navigation.tabs", "navigation.tabs.sticky", "navigation.top", "navigation.tracking", "search.highlight", "search.share", "search.suggest", "toc.follow"], "search": "/assets/javascripts/workers/search.74e28a9f.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    <script id="__config" type="application/json">{"base": ".", "features": ["content.action.edit", "content.action.view", "navigation.expand", "navigation.footer", "navigation.indexes", "navigation.sections", "navigation.tabs", "navigation.tabs.sticky", "navigation.top", "navigation.tracking", "search.highlight", "search.share", "search.suggest", "toc.follow"], "search": "assets/javascripts/workers/search.74e28a9f.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
     
     
-      <script src="/assets/javascripts/bundle.220ee61c.min.js"></script>
+      <script src="assets/javascripts/bundle.220ee61c.min.js"></script>
       
         
           <script src="https://unpkg.com/mermaid@9.3/dist/mermaid.min.js"></script>
