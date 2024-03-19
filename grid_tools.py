@@ -247,6 +247,14 @@ def lfn_to_pfn(server, lfn):
   result = client.lfns2pfns(server, [ key ])
   return result[key]
 
+def path_to_pfn(path, *sub_paths):
+  if path.startswith('T'):
+    server, lfn = path.split(':')
+    pfn = lfn_to_pfn(server, lfn)
+  else:
+    pfn = path
+  return os.path.join(pfn, *sub_paths)
+
 def das_file_site_info(file, inputDBS='global', verbose=0):
   query = f'site file={file}'
   if inputDBS != 'global':
@@ -282,23 +290,27 @@ def das_file_pfns(file, disk_only=True, return_adler32=False, inputDBS='global',
 
 def copy_remote_file(input_remote_file, output_local_file, inputDBS='global', n_retries=4, retry_sleep_interval=10,
                      custom_pfns_prefix='', voms_token=None, verbose=1):
-  pfns_list, adler32 = das_file_pfns(input_remote_file, disk_only=True, return_adler32=True, inputDBS=inputDBS,
-                                     verbose=verbose)
   if voms_token is None:
     voms_token = get_voms_proxy_info()['path']
+
+  from_das = input_remote_file.startswith('/store/')
+  if from_das:
+    pfns_list, adler32 = das_file_pfns(input_remote_file, disk_only=True, return_adler32=True, inputDBS=inputDBS,
+                                      verbose=verbose)
+  else:
+    if len(custom_pfns_prefix) > 0:
+      file_pfns = custom_pfns_prefix + input_remote_file
+    else:
+      file_pfns = input_remote_file
+    adler32 = gfal_sum(file_pfns, voms_token=voms_token, sum_type='adler32')
+    pfns_list = [ file_pfns ]
   if os.path.exists(output_local_file):
     if adler32 is not None and check_download(output_local_file, expected_adler32sum=adler32):
       return
     os.remove(output_local_file)
 
   if len(pfns_list) == 0:
-    if input_remote_file.startswith('/store/'):
-      if custom_pfns_prefix != '':
-        pfns_list = [custom_pfns_prefix+input_remote_file, input_remote_file]
-      else:
-        pfns_list = [input_remote_file]
-    else:
-      raise RuntimeError(f'Unable to find any remote location for {input_remote_file}.')
+    raise RuntimeError(f'Unable to find any remote location for "{input_remote_file}".')
 
   def download(pfns):
     if verbose > 0:

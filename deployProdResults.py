@@ -52,6 +52,7 @@ def load_config(cfg_file, era):
     cfg[key] = value[0]
 
   tasks = {}
+  datasets = {}
   for task_file in cfg['task_files']:
     with open(task_file) as f:
       task_yaml = yaml.safe_load(f)
@@ -64,8 +65,31 @@ def load_config(cfg_file, era):
         inputDataset = task_desc['inputDataset']
       else:
         inputDataset = task_desc
-      tasks[task_name] = inputDataset
-  cfg['tasks'] = tasks
+      if task_name not in tasks:
+        tasks[task_name] = []
+      tasks[task_name].append({ 'file': task_file, 'dataset': inputDataset })
+      if inputDataset not in datasets:
+        datasets[inputDataset] = []
+      datasets[inputDataset].append({ 'file': task_file, 'name': task_name })
+  all_ok = True
+  for task_name, task_entries in tasks.items():
+    if len(task_entries) != 1:
+      print(f'ERROR: task "{task_name}" is defined multiple files:')
+      for entry in task_entries:
+        print(f'  file={entry["file"]} dataset={entry["dataset"]}')
+      all_ok = False
+  for dataset, dataset_entries in datasets.items():
+    if len(dataset_entries) != 1:
+      print(f'ERROR: input dataset "{dataset}" is defined in multiple tasks:')
+      for entry in dataset_entries:
+        print(f'  file={entry["file"]} task={entry["name"]}')
+      all_ok = False
+
+  if not all_ok:
+    raise RuntimeError('Production configuration is not consistent')
+
+  cfg['tasks'] = { task_name: task_entries[0]['dataset'] for task_name, task_entries in tasks.items() }
+  cfg['datasets'] = { dataset: dataset_entries[0]['name'] for dataset, dataset_entries in datasets.items() }
 
   return cfg
 
@@ -152,20 +176,74 @@ def get_event_stats(root_files):
         n_evts[stat_name] = n_evts.get(stat_name, 0) + df.Count().GetValue()
   return n_evts
 
-def deploy_prod_results(cfg_file, era, dry_run=False):
+def check_consistency(cfg, datasets_info):
+  all_ok = True
+  datasets_by_name = {}
+  datasets_by_path = {}
+  for dataset in datasets_info['datasets']:
+    name = dataset['name']
+    path = dataset['dataset']
+    if name not in datasets_by_name:
+      datasets_by_name[name] = []
+    datasets_by_name[name].append(path)
+    if path not in datasets_by_path:
+      datasets_by_path[path] = []
+    datasets_by_path[path].append(name)
+  for dataset_name, paths in datasets_by_name.items():
+    if len(paths) != 1:
+      paths_str = ', '.join(paths)
+      print(f'ERROR: dataset "{dataset_name}" is used in multiple paths: {paths_str}')
+      all_ok = False
+  for dataset_path, names in datasets_by_path.items():
+    if len(names) != 1:
+      names_str = ', '.join(names)
+      print(f'ERROR: path "{dataset_path}" is refered by multiple names: {names_str}')
+      all_ok = False
+  if not all_ok:
+    return False
+
+  datasets_by_name = { name: paths[0] for name, paths in datasets_by_name.items() }
+  datasets_by_path = { path: names[0] for path, names in datasets_by_path.items() }
+
+  for name, dataset in datasets_by_name.items():
+    if name in cfg['tasks'] and dataset == cfg['tasks'][name]:
+      continue
+    all_ok = False
+    dataset_found = dataset in cfg['datasets']
+    name_found = name in cfg['tasks']
+    if dataset_found:
+      print(f'ERROR: deployed name != production name for dataset={dataset}:')
+      print(f' {name} != {cfg["datasets"][dataset]}')
+    if name_found:
+      print(f'ERROR: deployed dataset != production dataset for name={name}:')
+      print(f' {dataset} != {cfg["tasks"][name]}')
+    if not name_found and not dataset_found:
+      print(f'ERROR: deployed name={name} dataset={dataset}" is not defined in the production configuration.')
+
+  return all_ok
+
+def deploy_prod_results(cfg_file, era, dry_run=False, check_only=False, output_missing=None):
   cfg = load_config(cfg_file, era)
+  if len(cfg['datasets']) == 0:
+    raise RuntimeError(f'No datasets are found for era="{era}".')
+
   voms_token = get_voms_proxy_info()['path']
   tmp_dir = tempfile.mkdtemp(dir=os.environ['TMPDIR'])
   update_eras_info(cfg, era, tmp_dir, voms_token, dry_run)
 
   datasets_json_path = os.path.join(cfg['info'], era, 'datasets.json')
   datasets_tmp = os.path.join(tmp_dir, 'datasets.json')
-  has_updates = False
-  if gfal_exists(datasets_json_path, voms_token=voms_token):
-    print('Loading existing datasets info...')
-    gfal_copy_safe(datasets_json_path, datasets_tmp, voms_token=voms_token, verbose=0)
-    with open(datasets_tmp) as f:
-      datasets_info = json.load(f)
+  if not gfal_exists(datasets_json_path, voms_token=voms_token):
+    raise RuntimeError(f'File {datasets_json_path} does not exist.')
+  print('Loading existing datasets info...')
+  gfal_copy_safe(datasets_json_path, datasets_tmp, voms_token=voms_token, verbose=0)
+  with open(datasets_tmp) as f:
+    datasets_info = json.load(f)
+
+  if not check_consistency(cfg, datasets_info):
+    raise RuntimeError(f'Inconsistent datasets info in {datasets_json_path}.')
+  if check_only:
+    return
 
   missing_tasks = set()
   task_names = natural_sort(cfg['tasks'].keys())
@@ -248,13 +326,19 @@ def deploy_prod_results(cfg_file, era, dry_run=False):
   print(f'Total number of tasks: {len(cfg["tasks"])}')
   missing_tasks = natural_sort(missing_tasks)
   print(f'Missing {len(missing_tasks)} tasks: {", ".join(missing_tasks)}')
+  if output_missing is not None and len(missing_tasks) > 0:
+    with open(output_missing, 'w') as f:
+      json.dump(missing_tasks, f, indent=2)
 
 if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser(description='Deploy produced files in to the final destination.')
   parser.add_argument('--cfg', required=True, type=str, help="configuration file")
   parser.add_argument('--era', required=True, type=str, help="era to deploy")
+  parser.add_argument('--output-missing', required=False, type=str, default=None,
+                      help="file to store the list of missing datasets")
   parser.add_argument('--dry-run', action="store_true", help="Do not perform actions.")
+  parser.add_argument('--check-only', action="store_true", help="Run only consistency checks.")
   args = parser.parse_args()
 
-  deploy_prod_results(args.cfg, args.era, args.dry_run)
+  deploy_prod_results(args.cfg, args.era, args.dry_run, args.check_only, args.output_missing)

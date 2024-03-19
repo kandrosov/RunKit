@@ -15,7 +15,7 @@ from .crabTaskStatus import JobStatus, Status
 from .crabTask import Task
 from .crabLaw import LawTaskManager
 from .run_tools import PsCallError, ps_call, print_ts, timestamp_str
-from .grid_tools import get_voms_proxy_info, gfal_copy_safe, lfn_to_pfn, gfal_rm, gfal_exists
+from .grid_tools import get_voms_proxy_info, gfal_copy_safe, path_to_pfn, gfal_rm, gfal_exists
 
 class TaskStat:
   summary_only_thr = 10
@@ -294,7 +294,8 @@ def check_prerequisites(main_cfg):
   if 'localProcessing' not in main_cfg or 'LAW_HOME' not in os.environ:
     raise RuntimeError("Law environment is not setup. It is needed to run the local processing step.")
 
-def load_tasks(work_area, task_list_path, new_task_list_files, main_cfg, update_cfg):
+def load_tasks(work_area, task_list_path, new_task_list_files, main_cfg, update_cfg, task_selection,
+               task_selected_names, task_selected_status):
   tasks = {}
   created_tasks = set()
   updated_tasks = set()
@@ -310,6 +311,8 @@ def load_tasks(work_area, task_list_path, new_task_list_files, main_cfg, update_
         new_tasks = yaml.safe_load(f)
       for task_name in new_tasks:
         if task_name == 'config': continue
+        if task_selected_names is not None and task_name not in task_selected_names:
+          continue
         if task_name in tasks:
           if update_cfg:
             tasks[task_name].updateConfig(main_cfg, new_tasks)
@@ -329,7 +332,16 @@ def load_tasks(work_area, task_list_path, new_task_list_files, main_cfg, update_
     not_updated = set(tasks.keys()) - created_tasks - updated_tasks
     if len(not_updated) > 0:
       print(f'Configuration not updated for tasks: {", ".join(not_updated)}')
-  return tasks
+
+  selected_tasks = {}
+  for task_name, task in tasks.items():
+    pass_selection = task_selection is None or eval(task_selection)
+    pass_name_selection = task_selected_names is None or task.name in task_selected_names
+    pass_status_selection = task_selected_status is None or task.taskStatus.status in task_selected_status
+    if pass_selection and pass_name_selection and pass_status_selection:
+      selected_tasks[task_name] = task
+
+  return tasks, selected_tasks
 
 def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status_update=False,
                   update_cfg=False, no_loop=False, task_selection=None, task_selected_names=None,
@@ -348,15 +360,8 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
   check_prerequisites(main_cfg)
 
   task_list_path = os.path.join(work_area, 'tasks.json')
-  all_tasks = load_tasks(work_area, task_list_path, new_task_list_files, main_cfg, update_cfg)
-
-  selected_tasks = {}
-  for task_name, task in all_tasks.items():
-    pass_selection = task_selection is None or eval(task_selection)
-    pass_name_selection = task_selected_names is None or task.name in task_selected_names
-    pass_status_selection = task_selected_status is None or task.taskStatus.status in task_selected_status
-    if pass_selection and pass_name_selection and pass_status_selection:
-      selected_tasks[task_name] = task
+  all_tasks, selected_tasks = load_tasks(work_area, task_list_path, new_task_list_files, main_cfg, update_cfg,
+                                         task_selection, task_selected_names, task_selected_status)
 
   lawTaskManager = LawTaskManager(os.path.join(work_area, 'law_tasks.json'))
   vomsToken = get_voms_proxy_info()['path']
@@ -381,9 +386,7 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
       json.dump(status, f, indent=2)
     htmlReportDest = main_cfg.get('htmlReport', '')
     if len(htmlReportDest) > 0:
-      if htmlReportDest.startswith('T'):
-        server, lfn = htmlReportDest.split(':')
-        htmlReportDest = lfn_to_pfn(server, lfn)
+      htmlReportDest = path_to_pfn(htmlReportDest)
       file_dir = os.path.dirname(os.path.abspath(__file__))
       filesToCopy = [ status_path ]
       if not htmlUpdated:
@@ -469,9 +472,11 @@ if __name__ == "__main__":
   parser.add_argument('--update-cfg', action="store_true", help="Update task configs.")
   parser.add_argument('--no-loop', action="store_true", help="Run task update once and exit.")
   parser.add_argument('--select', required=False, type=str, default=None,
-                      help="select tasks to which apply an action. Default: select all.")
+                      help="select tasks using python expression. Default: select all.")
   parser.add_argument('--select-names', required=False, type=str, default=None,
                       help="select tasks with given names (use a comma separated list for multiple names)")
+  parser.add_argument('--select-names-from-file', required=False, type=str, default=None,
+                      help="select tasks with given names from a json file")
   parser.add_argument('--select-status', required=False, type=str, default=None,
                       help="select tasks with given status (use a comma separated list for multiple status)")
   parser.add_argument('--action', required=False, type=str, default=None,
@@ -480,7 +485,18 @@ if __name__ == "__main__":
   parser.add_argument('task_file', type=str, nargs='*', help="file(s) with task descriptions")
   args = parser.parse_args()
 
-  selected_names = args.select_names.split(',') if args.select_names is not None else None
+  apply_selection = False
+  selected_names = set()
+  if args.select_names is not None:
+    apply_selection = True
+    for name in args.select_names.split(','):
+      selected_names.add(name)
+  if args.select_names_from_file is not None:
+    apply_selection = True
+    with open(args.select_names_from_file, 'r') as f:
+      for name in json.load(f):
+        selected_names.add(name)
+  selected_names = list(selected_names) if apply_selection else None
   selected_status = None
   if args.select_status is not None:
     selected_status = set()

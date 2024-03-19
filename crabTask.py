@@ -14,8 +14,8 @@ if __name__ == "__main__":
 
 from .crabTaskStatus import CrabTaskStatus, Status, JobStatus, LogEntryParser, StatusOnScheduler, StatusOnServer
 from .run_tools import PsCallError, ps_call, natural_sort, timestamp_str, adler32sum
-from .grid_tools import get_voms_proxy_info, lfn_to_pfn, gfal_copy_safe, gfal_ls_safe, das_file_pfns, \
-                        gfal_copy, GfalError, COPY_TMP_SUFFIX, gfal_exists, gfal_rm
+from .grid_tools import get_voms_proxy_info, path_to_pfn, gfal_copy_safe, gfal_ls_safe, das_file_pfns, \
+                        gfal_copy, GfalError, COPY_TMP_SUFFIX, gfal_exists, gfal_rm, gfal_ls_recursive
 from .envToJson import get_cmsenv
 from .getFileRunLumi import getFileRunLumi
 
@@ -144,11 +144,7 @@ class Task:
         desc['name'], desc['ext'] = os.path.splitext(output['file'])
         for destName in [ 'crabOutput', 'finalOutput' ]:
           dest = output[destName]
-          if dest.startswith('T'):
-            server, lfn = dest.split(':')
-            task_lfn = os.path.join(lfn, self.name)
-            dest = lfn_to_pfn(server, task_lfn)
-          desc[destName] = dest
+          desc[destName] = path_to_pfn(dest, self.name)
         if 'skimCfg' in output:
           desc['skimCfg'] = output['skimCfg']
           desc['skimSetup'] = output['skimSetup']
@@ -174,13 +170,13 @@ class Task:
       params.append(f'datasetFiles={datasetFileName}')
     return params
 
-  def isInputDatasetLocal(self):
-    return self.inputDataset.startswith('local:')
+  def isInputFromDAS(self):
+    return self.inputDataset.startswith('/')
 
   def isInLocalRunMode(self, recoveryIndex=None):
     if recoveryIndex is None:
       recoveryIndex = self.recoveryIndex
-    return self.isInputDatasetLocal() or recoveryIndex >= self.maxRecoveryCount
+    return not self.isInputFromDAS() or recoveryIndex >= self.maxRecoveryCount
 
   def getUnitsPerJob(self):
     if self.recoveryIndex >= self.maxRecoveryCount - 1:
@@ -252,17 +248,24 @@ class Task:
         with open(datasetFilesPath, 'r') as f:
           self.datasetFiles = json.load(f)
       else:
-        if self.isInputDatasetLocal():
+        if not self.isInputFromDAS():
           print(f'{self.name}: Gathering dataset files ...')
-          ds_path = self.inputDataset[len('local:'):]
-          if not os.path.exists(ds_path):
-            raise RuntimeError(f'{self.name}: unable to find local dataset path "{ds_path}"')
+          is_local = self.inputDataset.startswith('local:')
           self.datasetFiles = {}
           all_files = []
-          for subdir, dirs, files in os.walk(ds_path):
-            for file in files:
-              if file.endswith('.root') and not file.startswith('.'):
-                all_files.append('file:' + os.path.join(subdir, file))
+          if is_local:
+            ds_path = self.inputDataset[len('local:'):]
+            if not os.path.exists(ds_path):
+              raise RuntimeError(f'{self.name}: unable to find local dataset path "{ds_path}"')
+            for subdir, dirs, files in os.walk(ds_path):
+              for file in files:
+                if file.endswith('.root') and not file.startswith('.'):
+                  all_files.append('file:' + os.path.join(subdir, file))
+          else:
+            input_pfn = path_to_pfn(self.inputDataset)
+            for file in gfal_ls_recursive(input_pfn, voms_token=self.getVomsToken(), verbose=0):
+              if not file.is_dir and file.name.endswith('.root') and not file.name.startswith('.'):
+                all_files.append(file.full_name)
           for file_id, file_path in enumerate(natural_sort(all_files)):
             self.datasetFiles[file_path] = file_id
         else:
@@ -397,10 +400,13 @@ class Task:
         hadd_report = json.load(f)
       report['outputs'] = {}
       for haddOutput, inputList in hadd_report.items():
-        report['outputs'][haddOutput] = {}
-        for haddInput in inputList:
-          origInput = haddInputs[haddInput]
-          report['outputs'][haddOutput][origInput] = self.getFileRunLumi()[origInput]
+        if self.isInputFromDAS():
+          report['outputs'][haddOutput] = {}
+          for haddInput in inputList:
+            origInput = haddInputs[haddInput]
+            report['outputs'][haddOutput][origInput] = self.getFileRunLumi()[origInput]
+        else:
+          report['outputs'][haddOutput] = [ haddInputs[haddInput] for haddInput in inputList ]
       report['processingEnd'] = timestamp_str()
 
       report_file =f'prodReport_{outputNameBase}.json'
