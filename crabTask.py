@@ -826,7 +826,7 @@ class Task:
       file_out = os.path.join(tmp_dir, 'tmp.root')
       ok = True
       try:
-        gfal_copy_safe(file, file_out, self.getVomsToken(), verbose=0)
+        gfal_copy_safe(file, file_out, self.getVomsToken(), n_retries=2, verbose=0)
       except GfalError as e:
         ok = False
       if os.path.exists(file_out):
