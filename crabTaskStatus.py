@@ -26,6 +26,7 @@ class StatusOnServer(Enum):
   KILLFAILED = 7
 
 class StatusOnScheduler(Enum):
+  WAITING_FOR_BOOTSTRAP = 0
   SUBMITTED = 1
   FAILED = 2
   FAILED_KILLED = 3
@@ -56,7 +57,7 @@ class JobStatus(Enum):
 
 class CrabWarning:
   known_warnings = {
-    r"Some blocks from dataset '.+' were skipped  because they are only present at blacklisted and/or not-whitelisted sites.": CrabWarningCategory.BlocksSkipped,
+    r"Some blocks from dataset '.+' were skipped  because they are only present at blacklisted, not-whitelisted, and/or non-accelerator sites.": CrabWarningCategory.BlocksSkipped,
     r"the max jobs runtime is less than 30% of the task requested value": CrabWarningCategory.ShortRuntime,
     r"the average jobs CPU efficiency is less than 50%": CrabWarningCategory.LowCpuEfficiency,
   }
@@ -117,6 +118,8 @@ class LogEntryParser:
         task_status.status = Status.InProgress
       if task_status.status_on_server == StatusOnServer.KILLED:
         task_status.status = Status.WaitingForRecovery
+      if task_status.status_on_scheduler == StatusOnScheduler.WAITING_FOR_BOOTSTRAP:
+        task_status.status = Status.Submitted
       if task_status.status_on_scheduler in [ StatusOnScheduler.FAILED, StatusOnScheduler.FAILED_KILLED ]:
         task_status.status = Status.WaitingForRecovery
       if task_status.status_on_scheduler == StatusOnScheduler.COMPLETED:
@@ -168,8 +171,7 @@ class LogEntryParser:
     warning_text = value
     while n < len(log_lines) - 1:
       n += 1
-      line = log_lines[n].strip()
-      if len(line) == 0 or log_lines[n][0] != ' ':
+      if len(log_lines[n]) == 0 or log_lines[n][0] != ' ':
         break
       warning_text += f'\n{log_lines[n].strip()}'
     task_status.warnings.append(CrabWarning(warning_text))
@@ -309,6 +311,11 @@ class LogEntryParser:
       n += 1
     return n
 
+  def waiting_for_bootstrap(task_status, log_lines, n, value):
+    task_status.status_on_scheduler = StatusOnScheduler.WAITING_FOR_BOOTSTRAP
+    return n + 1
+
+
   def details(task_status, log_entries, n, value):
     task_status.details = json.loads(log_entries[n])
     return n + 1
@@ -332,7 +339,8 @@ class LogEntryParser:
     "Failure message from server:": failure,
     "{": details,
     "The task failed to bootstrap on the Grid scheduler": bootstrap_failed,
-    "Rucio client intialized for account": "account"
+    "Rucio client intialized for account": "account",
+    "Waiting for the Grid scheduler to bootstrap your task": waiting_for_bootstrap,
   }
   error_summary_end = "Have a look at https://twiki.cern.ch/twiki/bin/viewauth/CMSPublic/JobExitCodes for a description of the exit codes."
   status_will_be_available = "Status information will be available within a few minutes"
