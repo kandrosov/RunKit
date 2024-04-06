@@ -138,7 +138,7 @@ class TaskStat:
 def sanity_checks(task):
   abnormal_inactivity_thr = task.getMaxJobRuntime() + 1
 
-  if task.taskStatus.status == Status.InProgress:
+  if task.taskStatus.status in [ Status.InProgress, Status.Submitted ]:
     delta_t = task.getTimeSinceLastJobStatusUpdate()
     if delta_t > abnormal_inactivity_thr:
       text = f'{task.name}: status of all jobs is not changed for at least {delta_t:.1f} hours.' \
@@ -147,6 +147,7 @@ def sanity_checks(task):
       task.kill()
       return False
 
+  if task.taskStatus.status == Status.InProgress:
     job_states = sorted(task.taskStatus.job_stat.keys(), key=lambda x: x.value)
     ref_states = [ JobStatus.running, JobStatus.finished, JobStatus.failed ]
     if len(job_states) <= len(ref_states) and job_states == ref_states[:len(job_states)]:

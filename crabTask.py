@@ -656,9 +656,11 @@ class Task:
                 env=self.getCmsswEnv(), singularity_cmd=self.singularity_cmd)
       except PsCallError as e:
         print(f'{self.name}: error sending kill request. {e}')
-        print(f'{self.name}: setting status to WaitingForRecovery.')
-        self.taskStatus.status = Status.WaitingForRecovery
-        self.saveStatus()
+      print(f'{self.name}: setting status to WaitingForRecovery.')
+      self.taskStatus.status = Status.WaitingForRecovery
+      self.lastJobStatusUpdate = -1.
+      self.saveStatus()
+      self.saveCfg()
 
   def getProcessedFiles(self, useCacheOnly=False, resetCache=False):
     cache_file = os.path.join(self.workArea, 'processed_files.json')
