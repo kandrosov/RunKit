@@ -158,11 +158,11 @@ def repeat_until_success(fn, opt_list=([],), exception=None, n_retries=4, retry_
       except:
         if verbose > 0:
           print(traceback.format_exc())
-      if n != n_retries - 1:
-        sleep_interval = retry_sleep_interval ** (n + 1)
-        if verbose > 0:
-          print(f'Waiting for {sleep_interval} seconds before the next try.')
-        time.sleep(sleep_interval)
+    if n != n_retries - 1:
+      sleep_interval = retry_sleep_interval ** (n + 1)
+      if verbose > 0:
+        print(f'Waiting for {sleep_interval} seconds before the next try.')
+      time.sleep(sleep_interval)
 
   if exception is not None:
     raise exception

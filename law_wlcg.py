@@ -14,12 +14,16 @@ from law.logger import get_logger
 logger = get_logger(__name__)
 
 from .law_gfal import GFALFileInterface
+from .grid_tools import path_to_pfn
 
 
 class WLCGFileSystem(RemoteFileSystem):
   def __init__(self, base):
-    config = {}
-    super(WLCGFileSystem, self).__init__(GFALFileInterface(base))
+    if type(base) is str:
+      base = [base]
+    base_pfns = [path_to_pfn(b) for b in base]
+    file_interface = GFALFileInterface(base_pfns)
+    super(WLCGFileSystem, self).__init__(file_interface)
 
 class WLCGTarget(RemoteTarget):
   def __init__(self, path, fs, **kwargs):
