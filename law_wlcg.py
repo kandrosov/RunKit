@@ -18,7 +18,7 @@ from .grid_tools import path_to_pfn
 
 
 class WLCGFileSystem(RemoteFileSystem):
-  def __init__(self, base):
+  def __init__(self, base, ls_cache_validity_period=60):
     if type(base) is str:
       base = [base]
     base_pfns = [path_to_pfn(b) for b in base]
