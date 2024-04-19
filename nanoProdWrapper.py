@@ -13,7 +13,7 @@ options = VarParsing('analysis')
 options.register('sampleType', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
                  "Indicates the sample type: data or mc")
 options.register('era', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
-                 "Indicates era: Run2_2016_HIPM, Run2_2016, Run2_2017, Run2_2018, Run3_2022, Run3_2022_postEE")
+                 "Indicates era: Run2_2016_HIPM, Run2_2016, Run2_2017, Run2_2018, Run3_2022, Run3_2022EE, Run3_2023, Run3_2023BPix")
 options.register('mustProcessAllInputs', False, VarParsing.multiplicity.singleton, VarParsing.varType.bool,
                  "To sucessfully finish, all inputs must be processed.")
 options.register('maxRuntime', 20, VarParsing.multiplicity.singleton, VarParsing.varType.int,
@@ -53,8 +53,10 @@ cond_mc = {
   'Run2_2016': 'auto:run2_mc',
   'Run2_2017': 'auto:phase1_2017_realistic',
   'Run2_2018': 'auto:phase1_2018_realistic',
-  'Run3_2022': '130X_mcRun3_2022_realistic_v5',
-  'Run3_2022EE': '130X_mcRun3_2022_realistic_postEE_v6',
+  'Run3_2022': 'auto:phase1_2022_realistic',
+  'Run3_2022EE': 'auto:phase1_2022_realistic_postEE',
+  'Run3_2023': 'auto:phase1_2023_realistic',
+  'Run3_2023BPix': 'auto:phase1_2023_realistic_postBPix'
 }
 
 if options.era.startswith('Run2'):
@@ -63,8 +65,10 @@ if options.era.startswith('Run2'):
   era_mod = ',run2_nanoAOD_106Xv2'
 elif options.era.startswith('Run3'):
   cond_data_run3 = {
-    'Run3_2022CDE': '130X_dataRun3_v2',
-    'Run3_2022FG': '130X_dataRun3_PromptAnalysis_v1',
+    'Run3_2022CDE': 'auto:run3_data',
+    'Run3_2022FG': 'auto:run3_data_PromptAnalysis',
+    'Run3_2023': 'auto:run3_data',
+    'Run3_2023BPix': 'auto:run3_data',
   }
   if options.sampleType == 'data':
     cond_data = cond_data_run3[options.era]
