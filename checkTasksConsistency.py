@@ -1,4 +1,5 @@
 import os
+import re
 import yaml
 
 class CheckResult:
@@ -68,6 +69,72 @@ def check_consistency_era(task_cfg_files):
 
   return CheckResult(all_ok, tasks_by_name, tasks_by_dataset)
 
+
+class ExceptionMatcher:
+  def __init__(self, exceptions):
+    self.exceptions = exceptions
+    self.used_patterns = set()
+
+  def get_known_exceptions(self, task_name):
+    matched_eras = set()
+    era_to_pattern_list = {}
+    for task_pattern, eras in exceptions.items():
+      if (task_pattern[0] == '^' and re.match(task_pattern, task_name)) or task_pattern == task_name:
+        for era in eras:
+          matched_eras.add(era)
+          if era not in era_to_pattern_list:
+            era_to_pattern_list[era] = []
+          era_to_pattern_list[era].append(task_pattern)
+        self.used_patterns.add(task_pattern)
+    all_ok = True
+    era_to_pattern = {}
+    for era, patterns in era_to_pattern_list.items():
+      if len(patterns) > 1:
+        all_ok = False
+        patterns_str = ', '.join(patterns)
+        print(f'{task_name} is matched by multiple exception patterns that include {era}: {patterns_str}')
+      era_to_pattern[era] = patterns[0]
+    return all_ok, matched_eras, era_to_pattern_list
+
+  def get_unused_patterns(self):
+    return set(self.exceptions.keys()) - self.used_patterns
+
+def check_task_consistency(task_name, eras, all_eras, exception_matcher, era_results):
+  n_eras = len(all_eras)
+  is_data = era_results[eras[0]].tasks_by_name[task_name][0]['isData']
+  exception_match_ok, known_exceptions, known_exception_to_pattern = exception_matcher.get_known_exceptions(task_name)
+  if not exception_match_ok:
+    return False
+  missing_eras = all_eras - set(eras) - known_exceptions
+  redundant_exceptions = known_exceptions & set(eras)
+  if len(redundant_exceptions) > 0:
+    known_exceptions_str = ', '.join(known_exceptions)
+    redundant_exceptions_str = ', '.join(redundant_exceptions)
+    known_exception_patterns_str = ', '.join(known_exception_to_pattern.keys())
+    print(f'{task_name} is listed as exception for [{known_exceptions_str}] in [{known_exception_patterns_str}]'
+          f', but it exists for [{redundant_exceptions_str}]')
+    return False
+  if len(eras) != n_eras and not is_data and len(missing_eras) > 0:
+    missing_eras_str = ', '.join(missing_eras)
+    print(f'{task_name} is not available in: {missing_eras_str}')
+    for era in eras:
+      for task in era_results[era].tasks_by_name[task_name]:
+        print(f'  era={era} file={task["file"]} dataset={task["inputDataset"]}')
+    return False
+  file_names = {}
+  for era in eras:
+    for task in era_results[era].tasks_by_name[task_name]:
+      file_name = os.path.split(task['file'])[1]
+      if file_name not in file_names:
+        file_names[file_name] = []
+      file_names[file_name].append(era)
+  if len(file_names) > 1:
+    print(f'{task_name} is defined in multiple files:')
+    for file_name, eras in file_names.items():
+      print(f'  {file_name} in {", ".join(eras)}')
+    return False
+  return True
+
 def check_consistency(era_files_dict, exceptions):
   era_results = {}
   tasks_by_name = {}
@@ -80,33 +147,14 @@ def check_consistency(era_files_dict, exceptions):
         tasks_by_name[task_name] = []
       tasks_by_name[task_name].append(era)
 
-  n_eras = len(era_files_dict)
+  exception_matcher = ExceptionMatcher(exceptions)
   all_eras = set(era_files_dict.keys())
   for task_name, eras in tasks_by_name.items():
-    is_data = era_results[eras[0]].tasks_by_name[task_name][0]['isData']
-    if len(eras) != n_eras and not is_data:
-      known_exceptions = exceptions.get(task_name, [])
-      missing_eras = all_eras - set(eras) - set(known_exceptions)
-      if len(missing_eras) > 0:
-        missing_eras_str = ', '.join(missing_eras)
-        print(f'{task_name} is not available in: {missing_eras_str}')
-        for era in eras:
-          for task in era_results[era].tasks_by_name[task_name]:
-            print(f'  era={era} file={task["file"]} dataset={task["inputDataset"]}')
-        all_ok = False
-    else:
-      file_names = {}
-      for era in eras:
-        for task in era_results[era].tasks_by_name[task_name]:
-          file_name = os.path.split(task['file'])[1]
-          if file_name not in file_names:
-            file_names[file_name] = []
-          file_names[file_name].append(era)
-      if len(file_names) > 1:
-        print(f'{task_name} is defined in multiple files:')
-        for file_name, eras in file_names.items():
-          print(f'  {file_name} in {", ".join(eras)}')
-        all_ok = False
+    task_consistent = check_task_consistency(task_name, eras, all_eras, exception_matcher, era_results)
+    all_ok = all_ok and task_consistent
+  unused_patterns = exception_matcher.get_unused_patterns()
+  if len(unused_patterns) > 0:
+    print(f'WARNING: unused entries in exceptions: {", ".join(unused_patterns)}')
   return all_ok
 
 if __name__ == "__main__":
