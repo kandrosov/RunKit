@@ -1,3 +1,4 @@
+import fnmatch
 import os
 import re
 import yaml
@@ -8,7 +9,7 @@ class CheckResult:
     self.tasks_by_name = tasks_by_name
     self.tasks_by_dataset = tasks_by_dataset
 
-def check_consistency_era(task_cfg_files):
+def check_consistency_era(task_cfg_files, dataset_name_mask_mc=None, dataset_name_mask_data=None):
   tasks_by_name = {}
   tasks_by_dataset = {}
   all_ok = True
@@ -66,6 +67,16 @@ def check_consistency_era(task_cfg_files):
       for task_entry in task_list:
         print(f'  file={task_entry["file"]} task={task_entry["name"]}')
       all_ok = False
+    is_data = task_list[0]['isData']
+    name_mask = dataset_name_mask_data if is_data else dataset_name_mask_mc
+    if name_mask is not None and len(name_mask) > 0:
+      if name_mask[0] == '^':
+        mask_matched = re.match(name_mask, inputDataset)
+      else:
+        mask_matched = fnmatch.fnmatch(inputDataset, name_mask)
+      if not mask_matched:
+        print(f'ERROR: input dataset "{inputDataset}" does not matches the expected mask "{name_mask}"')
+        all_ok = False
 
   return CheckResult(all_ok, tasks_by_name, tasks_by_dataset)
 
@@ -135,12 +146,12 @@ def check_task_consistency(task_name, eras, all_eras, exception_matcher, era_res
     return False
   return True
 
-def check_consistency(era_files_dict, exceptions):
+def check_consistency(era_files_dict, exceptions, dataset_name_mask_mc=None, dataset_name_mask_data=None):
   era_results = {}
   tasks_by_name = {}
   all_ok = True
   for era, files in era_files_dict.items():
-    era_results[era] = check_consistency_era(files)
+    era_results[era] = check_consistency_era(files, dataset_name_mask_mc, dataset_name_mask_data)
     all_ok = all_ok and era_results[era].all_ok
     for task_name in era_results[era].tasks_by_name.keys():
       if task_name not in tasks_by_name:
@@ -163,6 +174,10 @@ if __name__ == "__main__":
   parser.add_argument('--cross-eras', action='store_true', help='Check consistency of tasks across different eras.')
   parser.add_argument('--exceptions', type=str, required=False, default=None,
                       help='File with exceptions for the checks.')
+  parser.add_argument('--dataset-name-mask-mc', type=str, required=False, default=None,
+                      help='Expected mask for dataset names in DAS for MC')
+  parser.add_argument('--dataset-name-mask-data', type=str, required=False, default=None,
+                      help='Expected mask for dataset names in DAS for data')
   parser.add_argument('task_file', type=str, nargs='+', help="file(s) with task descriptions")
   args = parser.parse_args()
 
@@ -183,7 +198,7 @@ if __name__ == "__main__":
       exceptions = yaml.safe_load(f)
 
 
-  all_ok = check_consistency(era_files_dict, exceptions)
+  all_ok = check_consistency(era_files_dict, exceptions, args.dataset_name_mask_mc, args.dataset_name_mask_data)
   if all_ok:
     print("All checks are successfully passed.")
   else:
