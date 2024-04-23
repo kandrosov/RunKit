@@ -65,10 +65,8 @@ if options.era.startswith('Run2'):
   era_mod = ',run2_nanoAOD_106Xv2'
 elif options.era.startswith('Run3'):
   cond_data_run3 = {
-    'Run3_2022CDE': 'auto:run3_data',
-    'Run3_2022FG': 'auto:run3_data_PromptAnalysis',
+    'Run3_2022': 'auto:run3_data',
     'Run3_2023': 'auto:run3_data',
-    'Run3_2023BPix': 'auto:run3_data',
   }
   if options.sampleType == 'data':
     cond_data = cond_data_run3[options.era]
