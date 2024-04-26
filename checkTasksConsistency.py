@@ -1,6 +1,7 @@
 import fnmatch
 import os
 import re
+import sys
 import yaml
 
 class CheckResult:
@@ -110,7 +111,7 @@ class ExceptionMatcher:
   def get_unused_patterns(self):
     return set(self.exceptions.keys()) - self.used_patterns
 
-def check_task_consistency(task_name, eras, all_eras, exception_matcher, era_results):
+def check_task_consistency(task_name, eras, all_eras, exception_matcher, era_results, name_matching):
   n_eras = len(all_eras)
   is_data = era_results[eras[0]].tasks_by_name[task_name][0]['isData']
   exception_match_ok, known_exceptions, known_exception_to_pattern = exception_matcher.get_known_exceptions(task_name)
@@ -133,20 +134,38 @@ def check_task_consistency(task_name, eras, all_eras, exception_matcher, era_res
         print(f'  era={era} file={task["file"]} dataset={task["inputDataset"]}')
     return False
   file_names = {}
+  datasets = {}
   for era in eras:
     for task in era_results[era].tasks_by_name[task_name]:
       file_name = os.path.split(task['file'])[1]
       if file_name not in file_names:
         file_names[file_name] = []
       file_names[file_name].append(era)
+      dataset = task['inputDataset']
+      dataset_name = dataset.split('/')[1]
+      dataset_name_ref = dataset_name.lower()
+      for matching_entry in name_matching:
+        pattern, replacement = matching_entry.split(':')
+        dataset_name_ref = re.sub(pattern.lower(), replacement.lower(), dataset_name_ref)
+      if dataset_name_ref not in datasets:
+        datasets[dataset_name_ref] = []
+      datasets[dataset_name_ref].append((era, dataset, dataset_name))
   if len(file_names) > 1:
     print(f'{task_name} is defined in multiple files:')
     for file_name, eras in file_names.items():
       print(f'  {file_name} in {", ".join(eras)}')
     return False
+  if len(name_matching) > 0:
+    if len(datasets) > 1:
+      print(f'{task_name} is used to refer different datasets:')
+      for ref_name, era_list in datasets.items():
+        for era, dataset, dataset_name in era_list:
+          print(f'  era={era} dataset={dataset} ref={ref_name}')
+      return False
   return True
 
-def check_consistency(era_files_dict, exceptions, dataset_name_mask_mc=None, dataset_name_mask_data=None):
+def check_consistency(era_files_dict, exceptions, name_matching,
+                      dataset_name_mask_mc=None, dataset_name_mask_data=None):
   era_results = {}
   tasks_by_name = {}
   all_ok = True
@@ -161,7 +180,7 @@ def check_consistency(era_files_dict, exceptions, dataset_name_mask_mc=None, dat
   exception_matcher = ExceptionMatcher(exceptions)
   all_eras = set(era_files_dict.keys())
   for task_name, eras in tasks_by_name.items():
-    task_consistent = check_task_consistency(task_name, eras, all_eras, exception_matcher, era_results)
+    task_consistent = check_task_consistency(task_name, eras, all_eras, exception_matcher, era_results, name_matching)
     all_ok = all_ok and task_consistent
   unused_patterns = exception_matcher.get_unused_patterns()
   if len(unused_patterns) > 0:
@@ -174,6 +193,8 @@ if __name__ == "__main__":
   parser.add_argument('--cross-eras', action='store_true', help='Check consistency of tasks across different eras.')
   parser.add_argument('--exceptions', type=str, required=False, default=None,
                       help='File with exceptions for the checks.')
+  parser.add_argument('--name-matching', type=str, required=False, default=[], action='append',
+                      help='Matching equivalence between dataset names (multiple matching transformations accepted).')
   parser.add_argument('--dataset-name-mask-mc', type=str, required=False, default=None,
                       help='Expected mask for dataset names in DAS for MC')
   parser.add_argument('--dataset-name-mask-data', type=str, required=False, default=None,
@@ -198,8 +219,12 @@ if __name__ == "__main__":
       exceptions = yaml.safe_load(f)
 
 
-  all_ok = check_consistency(era_files_dict, exceptions, args.dataset_name_mask_mc, args.dataset_name_mask_data)
+  all_ok = check_consistency(era_files_dict, exceptions, args.name_matching, args.dataset_name_mask_mc, args.dataset_name_mask_data)
+
   if all_ok:
     print("All checks are successfully passed.")
+    exit_code = 0
   else:
     print("Some checks are failed.")
+    exit_code = 1
+  sys.exit(exit_code)
