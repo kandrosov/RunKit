@@ -125,9 +125,10 @@ def processFile(jobModule, file_id, input_file, outputs, cmd_line_args, params, 
     exception = e
   if os.path.exists(cmssw_report) and (not os.path.exists(_cmssw_report) or result):
     shutil.move(cmssw_report, _cmssw_report)
-  for file in tmp_files:
-    if os.path.exists(file):
-      os.remove(file)
+  if not hasattr(params, 'keepIntermediateFiles') or not params.keepIntermediateFiles:
+    for file in tmp_files:
+      if os.path.exists(file):
+        os.remove(file)
   for output in outputs:
     if len(output['output_pfn']) > 0 and os.path.exists(output['file_name']):
       os.remove(output['file_name'])

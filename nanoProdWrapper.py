@@ -16,6 +16,8 @@ options.register('era', '', VarParsing.multiplicity.singleton, VarParsing.varTyp
                  "Indicates era: Run2_2016_HIPM, Run2_2016, Run2_2017, Run2_2018, Run3_2022, Run3_2022EE, Run3_2023, Run3_2023BPix")
 options.register('mustProcessAllInputs', False, VarParsing.multiplicity.singleton, VarParsing.varType.bool,
                  "To sucessfully finish, all inputs must be processed.")
+options.register('keepIntermediateFiles', False, VarParsing.multiplicity.singleton, VarParsing.varType.bool,
+                 "Do not delete temporary files.")
 options.register('maxRuntime', 20, VarParsing.multiplicity.singleton, VarParsing.varType.int,
                  "Maximal expected job runtime in hours.")
 options.register('maxFiles', -1, VarParsing.multiplicity.singleton, VarParsing.varType.int,
@@ -71,7 +73,7 @@ elif options.era.startswith('Run3'):
   if options.sampleType == 'data':
     cond_data = cond_data_run3[options.era]
   era_str = 'Run3'
-  era_mod = ',run3_nanoAOD_124'
+  era_mod = ''
 else:
   raise RuntimeError(f'Unknown era = "{options.era}"')
 
@@ -119,6 +121,7 @@ process.exParams = cms.untracked.PSet(
   customisationFunction = cms.untracked.string(options.customise),
   customisationCommands = cms.untracked.string(options.customiseCmds),
   mustProcessAllInputs = cms.untracked.bool(options.mustProcessAllInputs),
+  keepIntermediateFiles = cms.untracked.bool(options.keepIntermediateFiles),
   jobModule = cms.untracked.string('crabJob_nanoProd.py'),
   output = cms.untracked.vstring(options.output),
   datasetFiles = cms.untracked.string(options.datasetFiles),
