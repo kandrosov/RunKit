@@ -11,19 +11,19 @@ class Status(Enum):
   TapeRecall = 4
   InProgress = 5
   WaitingForRecovery = 6
-  WaitingForLocalRecovery = 7
-  CrabFinished = 8
-  PostProcessingFinished = 9
-  Failed = 10
+  CrabFinished = 7
+  PostProcessingFinished = 8
+  Failed = 9
 
 class StatusOnServer(Enum):
   QUEUED = 1
   TAPERECALL = 2
-  SUBMITTED = 3
-  KILLED = 4
-  SUBMITFAILED = 5
-  RESUBMITFAILED = 6
-  KILLFAILED = 7
+  NEW = 3
+  SUBMITTED = 4
+  KILLED = 5
+  SUBMITFAILED = 6
+  RESUBMITFAILED = 7
+  KILLFAILED = 8
 
 class StatusOnScheduler(Enum):
   WAITING_FOR_BOOTSTRAP = 0
@@ -110,7 +110,7 @@ class LogEntryParser:
             break
         if not method_found:
           raise RuntimeError(f'Unknown log line {n} = "{log_lines[n]}".')
-      if task_status.status_on_server == StatusOnServer.QUEUED:
+      if task_status.status_on_server in [ StatusOnServer.QUEUED, StatusOnServer.NEW ]:
         task_status.status = Status.Submitted
       if task_status.status_on_server == StatusOnServer.TAPERECALL:
         task_status.status = Status.TapeRecall
@@ -145,6 +145,8 @@ class LogEntryParser:
       task_status.status_on_server = StatusOnServer.QUEUED
     elif value == "TAPERECALL on command SUBMIT":
       task_status.status_on_server = StatusOnServer.TAPERECALL
+    elif value == "NEW on command SUBMIT":
+      task_status.status_on_server = StatusOnServer.NEW
     else:
       if value not in StatusOnServer.__members__:
         raise RuntimeError(f'Unknown status on the CRAB server = "{value}"')

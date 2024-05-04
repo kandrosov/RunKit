@@ -40,21 +40,30 @@ class LawTaskManager:
       self.cfg = []
       self.has_updates = True
 
-  def add(self, task_work_area, task_grid_job_id, done_flag):
+  def add(self, task_work_area, task_grid_job_id, done_flag, failed_flag=None, ready_to_run=True):
     task_work_area = os.path.abspath(task_work_area)
     done_flag = os.path.abspath(done_flag)
-    if self.find(task_work_area, task_grid_job_id) >= 0:
+    failed_flag = os.path.abspath(failed_flag) if failed_flag is not None else None
+    existing_entry = self.find(task_work_area, task_grid_job_id)
+    if existing_entry is not None:
+      if existing_entry.get('done_flag') != done_flag or existing_entry.get('failed_flag') != failed_flag \
+         or existing_entry.get('ready_to_run', True) != ready_to_run:
+        existing_entry['done_flag'] = done_flag
+        existing_entry['failed_flag'] = failed_flag
+        existing_entry['ready_to_run'] = ready_to_run
+        self.has_updates = True
       return
+
     branch_id = len(self.cfg)
-    self.cfg.append({ 'branch_id': branch_id, 'task_work_area': task_work_area,
-                      'task_grid_job_id': task_grid_job_id, 'done_flag': done_flag })
+    self.cfg.append({ 'branch_id': branch_id, 'task_work_area': task_work_area, 'task_grid_job_id': task_grid_job_id,
+                      'done_flag': done_flag, 'failed_flag': failed_flag, 'ready_to_run': ready_to_run })
     self.has_updates = True
 
   def find(self, task_work_area, task_grid_job_id):
     for entry in self.cfg:
       if entry['task_work_area'] == task_work_area and entry['task_grid_job_id'] == task_grid_job_id:
-        return entry['branch_id']
-    return -1
+        return entry
+    return None
 
   def get_cfg(self):
     cfg_ext = []
@@ -136,17 +145,25 @@ class ProdTask(HTCondorWorkflow, law.LocalWorkflow):
     task_manager = LawTaskManager(task_list_path)
     branches = {}
     for entry in task_manager.get_cfg():
-      branches[entry['branch_id']] = (entry['task_work_area'], entry['task_grid_job_id'], entry['done_flag'], entry['dependencies'])
+      branches[entry['branch_id']] = (entry['task_work_area'], entry['task_grid_job_id'], entry['done_flag'], entry['dependencies'], entry.get('failed_flag'), entry.get('ready_to_run', True))
     return branches
 
   def output(self):
-    work_area, grid_job_id, done_flag, dependencies = self.branch_data
+    work_area, grid_job_id, done_flag, dependencies, failed_flag, ready_to_run = self.branch_data
+    if failed_flag is not None:
+      failed_flag_target = law.LocalFileTarget(failed_flag)
+      if failed_flag_target.exists():
+        return failed_flag_target
     done_flag_target = law.LocalFileTarget(done_flag)
     wait_flag_target = law.LocalFileTarget(done_flag + '.wait')
+    all_dependecies_exist = True
     for dependency in dependencies:
       if not os.path.exists(dependency):
-        wait_flag_target.touch()
-        return wait_flag_target
+        all_dependecies_exist = False
+        break
+    if not ready_to_run or not all_dependecies_exist:
+      wait_flag_target.touch()
+      return wait_flag_target
     return done_flag_target
 
   def run(self):
@@ -154,16 +171,25 @@ class ProdTask(HTCondorWorkflow, law.LocalWorkflow):
     thread.start()
     job_home, remove_job_home = self.law_job_home()
     try:
-      work_area, grid_job_id, done_flag, dependencies = self.branch_data
+      work_area, grid_job_id, done_flag, dependencies, failed_flag, ready_to_run = self.branch_data
       task = CrabTask.Load(workArea=work_area)
       if grid_job_id == -1:
+        done = False
         if task.taskStatus.status in [ Status.CrabFinished, Status.PostProcessingFinished ]:
-          if task.taskStatus.status == Status.CrabFinished:
-            print(f'Post-processing {task.name}')
-            task.postProcessOutputs(job_home)
-          self.output().touch()
+          try:
+            if task.taskStatus.status == Status.CrabFinished:
+              print(f'{task.name}: post-processing ...')
+              task.postProcessOutputs(job_home)
+            self.output().touch()
+            done = True
+          except Exception as e:
+            print(f'{task.name}: error while post-processing: {e}')
         else:
-          raise RuntimeError(f"task {task.name} is not ready for post-processing")
+          print(f"task {task.name} is not ready for post-processing")
+        if not done:
+          failed_flag = failed_flag if failed_flag is not None else task.getPostProcessingFaliedFlagFile()
+          failed_flag_target = law.LocalFileTarget(failed_flag)
+          failed_flag_target.touch()
       else:
         if grid_job_id in task.getGridJobs():
           print(f'Running {task.name} job_id = {grid_job_id}')

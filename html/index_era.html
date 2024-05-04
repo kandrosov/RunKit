@@ -37,7 +37,7 @@
             if(f_str.length == 0) return true;
             if(value == null || value == undefined) return false;
             var v_str = value.toString().toLowerCase();
-            return v_str.indexOf(f_str) > -1;
+            return v_str.match(f_str);
         }
 
         function UpdateColPos(cols) {
@@ -83,12 +83,23 @@
         xmlhttp.onreadystatechange = function() {
             if (this.readyState == 4 && this.status == 200) {
                 var data = JSON.parse(this.responseText);
+                console.log("loading data")
                 $("#pageTitle").text(data["title"]);
+                for(var entry in data["datasets"]) {
+                    entry["size_report"] = entry["name"] + "_size.html";
+                    entry["doc_report"] = entry["name"] + "_doc.html";
+                }
+                <!-- for(var entry in data["datasets"]) {
+                    console.log(entry);
+                }
+ -->
                 var db = {
                     loadData: function(filter) {
                         return $.grep(data["datasets"], function(item) {
                             for(var c = 0; c < columns.length; c++) {
                                 var c_name = columns[c]["name"];
+                                var match_found = find_match(item[c_name], filter[c_name]);
+                                //console.log(c_name, item[c_name], filter, match_found);
                                 if(!find_match(item[c_name], filter[c_name])) return false;
                             }
                             return true;

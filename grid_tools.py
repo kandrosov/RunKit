@@ -113,7 +113,7 @@ def gfal_copy_safe(input_file, output_file, voms_token=None, number_of_streams=2
   def download():
     nonlocal attempt
     attempt += 1
-    active_verbose = verbose + attempt if verbose > 0 else 0
+    active_verbose = max(verbose + attempt if verbose > 0 else 0, 2)
     if gfal_exists(output_file, voms_token=voms_token):
       gfal_rm(output_file, voms_token=voms_token, recursive=False)
     if gfal_exists(output_file_tmp, voms_token=voms_token):

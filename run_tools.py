@@ -29,15 +29,24 @@ def ps_call(cmd, shell=False, catch_stdout=False, catch_stderr=False, decode=Tru
     if not (isinstance(cmd, list) and len(cmd) == 1):
       raise ValueError('cmd must be a string or a list with a single element when shell=True')
   if singularity_cmd is not None:
-    if not shell:
-      raise ValueError('singularity_cmd can only be used with shell=True')
-    env_str = ''
+    env_list = []
+    if env is not None:
+      for key in [ 'PATH', 'LD_LIBRARY_PATH' ]:
+        if key in env:
+          env_list.append(f'{key}="{env[key]}"')
+    if shell:
+      env_str = ' '.join(env_list)
+      if len(env_str) > 0:
+        env_str += ' '
+      full_cmd = [ f"{singularity_cmd} --command-to-run '{env_str}{cmd[0]}'"]
+    else:
+      full_cmd = [ singularity_cmd, '--command-to-run', 'env' ] + env_list + cmd
     if env is not None:
       env_str = ''
       for key in [ 'PATH', 'LD_LIBRARY_PATH' ]:
         if key in env:
           env_str += f'{key}="{env[key]}" '
-    full_cmd = [ f"{singularity_cmd} --command-to-run '{env_str}{cmd[0]}'"]
+
   else:
     full_cmd = cmd
   cmd_str = []

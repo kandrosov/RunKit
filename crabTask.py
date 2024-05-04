@@ -418,6 +418,8 @@ class Task:
 
   def getPostProcessingDoneFlagFile(self):
     return os.path.join(self.workArea, 'post_processing_done.txt')
+  def getPostProcessingFaliedFlagFile(self):
+    return os.path.join(self.workArea, 'post_processing_failed.txt')
 
   def getGridJobDoneFlagDir(self):
     return os.path.join(self.workArea, 'grid_jobs_results')
@@ -434,7 +436,7 @@ class Task:
   def lastCrabStatusLog(self):
     return os.path.join(self.workArea, 'lastCrabStatus.txt')
 
-  def submit(self, lawTaskManager=None):
+  def submit(self, lawTaskManager=None, allowCrabAction=True):
     self.getDatasetFiles()
     if self.isInLocalRunMode():
       self.taskStatus = CrabTaskStatus()
@@ -444,8 +446,10 @@ class Task:
       for job_id in self.getGridJobs(lawTaskManager=lawTaskManager):
         self.taskStatus.details[str(job_id)] = { "State": "idle" }
       self.saveStatus()
-      return True
+      return (True, False)
     else:
+      if not allowCrabAction:
+        return (False, False)
       crabSubmitPath = os.path.join(os.path.dirname(__file__), 'crabSubmit.py')
       if self.recoveryIndex == 0:
         print(f'{self.name}: submitting ...')
@@ -460,7 +464,7 @@ class Task:
         if os.path.exists(crabArea):
           shutil.rmtree(crabArea)
         raise e
-      return False
+      return (False, True)
 
   def updateStatus(self, lawTaskManager=None):
     neen_local_run = False
@@ -506,20 +510,25 @@ class Task:
       self.saveStatus()
       neen_local_run = self.taskStatus.status not in [ Status.CrabFinished, Status.Failed ]
     else:
-      returncode, output, err = ps_call(f'crab status --json -d {self.crabArea()}', shell=True, verbose=0,
-                                        catch_stdout=True, split='\n', timeout=Task.crabOperationTimeout,
-                                        env=self.getCmsswEnv(), singularity_cmd=self.singularity_cmd)
-      self.taskStatus = LogEntryParser.Parse(output)
-      if self.taskStatus.status == Status.CrabFinished:
-        filesToProcess = self.getFilesToProcess()
-        if len(filesToProcess) != 0:
-          self.taskStatus.status = Status.WaitingForRecovery
-      self.saveStatus()
-      with open(self.lastCrabStatusLog(), 'w') as f:
-        f.write('\n'.join(output))
-      if self.taskStatus.status == Status.Unknown:
-        print(f'{self.name}: {self.taskStatus.status}. Parse error: {self.taskStatus.parse_error}')
-      self.getTaskId()
+      try:
+        returncode, output, err = ps_call([ 'crab', 'status', '--json', '-d', self.crabArea() ], shell=False, verbose=0,
+                                          catch_stdout=True, catch_stderr=True, split='\n',
+                                          timeout=Task.crabOperationTimeout,
+                                          env=self.getCmsswEnv(), singularity_cmd=self.singularity_cmd)
+        self.taskStatus = LogEntryParser.Parse(output)
+        if self.taskStatus.status == Status.CrabFinished:
+          filesToProcess = self.getFilesToProcess()
+          if len(filesToProcess) != 0:
+            self.taskStatus.status = Status.WaitingForRecovery
+        self.saveStatus()
+        with open(self.lastCrabStatusLog(), 'w') as f:
+          f.write('\n'.join(output))
+        if self.taskStatus.status == Status.Unknown:
+          print(f'{self.name}: {self.taskStatus.status}. Parse error: {self.taskStatus.parse_error}')
+        self.getTaskId()
+      except PsCallError as e:
+        print(f'{self.name}: failed to update status. {e}')
+        return False
     now = datetime.datetime.now()
     hasUpdates = self.lastJobStatusUpdate <= 0
     if not hasUpdates:
@@ -537,13 +546,13 @@ class Task:
       self.saveCfg()
     return neen_local_run
 
-  def recover(self, lawTaskManager=None):
+  def recover(self, lawTaskManager=None, allowCrabAction=True):
     filesToProcess = self.getFilesToProcess()
     if len(filesToProcess) == 0:
       print(f'{self.name}: no recovery is needed. All files have been processed.')
       self.taskStatus.status = Status.CrabFinished
       self.saveStatus()
-      return False
+      return (False, False)
 
     if self.isInLocalRunMode(recoveryIndex=self.recoveryIndex+1):
       print(f'{self.name}: creating a local recovery task\nFiles to process: ' + ', '.join(filesToProcess))
@@ -554,7 +563,10 @@ class Task:
         self.lastJobStatusUpdate = -1.
         self.saveCfg()
         self.submit(lawTaskManager=lawTaskManager)
-      return self.updateStatus()
+      return (self.updateStatus(lawTaskManager=lawTaskManager), False)
+
+    if not allowCrabAction:
+      return (False, False)
 
     jobIds = self.selectJobIds([JobStatus.finished], invert=True)
     lumiMask = self.getRepresentativeLumiMask(filesToProcess)
@@ -579,7 +591,7 @@ class Task:
       self.recoveryIndex -= 1
       self.saveCfg()
       raise e
-    return False
+    return (False, True)
 
   def gridJobsFile(self):
     return os.path.join(self.workArea, 'grid_jobs.json')
@@ -758,6 +770,17 @@ class Task:
       if expect_at_least_one_job and len(self.getGridJobs(lawTaskManager=lawTaskManager)) == 0:
         raise RuntimeError(f'{self.name}: unable to reset grid jobs')
 
+  def removeProcessedFiles(self):
+    print(f'{self.name}: removing crab outputs...')
+    processedFiles = self.getProcessedFiles()
+    for output in self.getOutputs():
+      outputName = output['file']
+      for fileName, fileDesc in processedFiles.items():
+        filePath = fileDesc['outputs'][outputName]
+        if gfal_exists(filePath, voms_token=self.getVomsToken()):
+          gfal_rm(filePath, voms_token=self.getVomsToken())
+    print(f'{self.name}: all crab outputs have been removed.')
+
   def checkFilesToProcess(self, lawTaskManager=None, resetStatus=False):
     filesToProcess = self.getFilesToProcess()
     print(f'dataset={self.inputDataset}')
@@ -800,8 +823,8 @@ class Task:
           print(f'    {pfn}: type={pfn_type} {msg}')
       if has_at_least_one_valid_source and resetStatus:
         has_status_changes = True
-        self.resetGridJobs(file=file, lawTaskManager=lawTaskManager)
         self.recoveryIndex = self.maxRecoveryCount
+        self.resetGridJobs(file=file, lawTaskManager=lawTaskManager)
         self.taskStatus.status = Status.SubmittedToLocal
     if has_status_changes:
       self.saveStatus()
@@ -836,7 +859,6 @@ class Task:
       return ok
 
     invalid_files = []
-    all_ok = True
     for input_file, entry in sorted(processedFiles.items(), key=lambda x: x[1]['id']):
       for output_file_name, output_file_path in entry['outputs'].items():
         if not check_file(output_file_path):
@@ -847,19 +869,22 @@ class Task:
         else:
           print(f'  {output_file_path}: OK')
 
-    if len(invalid_files) > 0:
+    all_ok = len(invalid_files) == 0
+    if not all_ok:
       print(f'{self.name}: the following files are invalid: {", ".join(invalid_files)}')
       if resetStatus:
         self.getProcessedFiles(resetCache=True)
+        self.recoveryIndex = self.maxRecoveryCount
         filesToProcess = self.getFilesToProcess()
         if len(filesToProcess) == 0:
           raise RuntimeError(f'{self.name}: unable to reset status.')
         for file in filesToProcess:
           self.resetGridJobs(file=file, lawTaskManager=lawTaskManager)
-        self.recoveryIndex = self.maxRecoveryCount
         self.taskStatus.status = Status.SubmittedToLocal
         self.saveStatus()
         self.saveCfg()
+    return all_ok
+
 
   def updateConfig(self, mainCfg, taskCfg):
     taskName = self.name

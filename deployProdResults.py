@@ -247,6 +247,7 @@ def deploy_prod_results(cfg_file, era, dry_run=False, check_only=False, output_m
 
   missing_tasks = set()
   task_names = natural_sort(cfg['tasks'].keys())
+  print('Checking datasets availability...')
   for task_name in task_names:
     task_dataset = cfg['tasks'][task_name]
     dataset_exists = False
@@ -308,9 +309,6 @@ def deploy_prod_results(cfg_file, era, dry_run=False, check_only=False, output_m
       'n_files': len(output_files),
       'n_selected': n_evts.get('n_selected', 0),
       'n_not_selected': n_evts.get('n_not_selected', 0),
-      'size_report': f'{task_name}_size.html',
-      'doc_report': f'{task_name}_doc.html',
-      'json_report': f'{task_name}_report.json',
     }
 
     print(json.dumps(dataset, indent=2))

@@ -170,22 +170,22 @@ def sanity_checks(task):
 
   return True
 
-def update(tasks, lawTaskManager, no_status_update=False):
+def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=False):
   print_ts("Updating...")
   stat = TaskStat()
   to_post_process = []
   to_run_locally = []
+  to_submit = []
+  to_recover = []
   for task_name, task in tasks.items():
     if task.taskStatus.status == Status.Defined:
-      if task.submit(lawTaskManager=lawTaskManager):
-        to_run_locally.append(task)
+      to_submit.append(task)
     elif task.taskStatus.status.value < Status.CrabFinished.value:
       if task.taskStatus.status.value < Status.WaitingForRecovery.value and not no_status_update:
         if task.updateStatus(lawTaskManager=lawTaskManager):
           to_run_locally.append(task)
       if task.taskStatus.status == Status.WaitingForRecovery:
-        if task.recover(lawTaskManager=lawTaskManager):
-          to_run_locally.append(task)
+        to_recover.append(task)
     sanity_checks(task)
     if task.taskStatus.status == Status.CrabFinished:
       if task.checkCompleteness():
@@ -195,12 +195,40 @@ def update(tasks, lawTaskManager, no_status_update=False):
           task.endDate = timestamp_str()
           task.saveStatus()
           task.saveCfg()
+          print(f'{task.name}: post-processing is done.')
+          task.removeProcessedFiles()
         else:
-          lawTaskManager.add(task.workArea, -1, done_flag)
-          to_post_process.append(task)
+          failed_flag = task.getPostProcessingFaliedFlagFile()
+          if os.path.exists(failed_flag):
+            print(f'{task.name}: post-processing failed. Checking consistency of processed files...')
+            if not task.checkProcessedFiles(lawTaskManager=lawTaskManager, resetStatus=True):
+              to_recover.append(task)
+              lawTaskManager.add(task.workArea, -1, done_flag, failed_flag=failed_flag, ready_to_run=False)
+            os.remove(failed_flag)
+          else:
+            lawTaskManager.add(task.workArea, -1, done_flag, failed_flag=failed_flag)
+            to_post_process.append(task)
       else:
-        if task.recover(lawTaskManager=lawTaskManager):
-          to_run_locally.append(task)
+        task.taskStatus.status = Status.WaitingForRecovery
+        task.saveStatus()
+        to_recover.append(task)
+  nActiveCrabTasks = 0
+  for task_name, task in tasks.items():
+    if not task.isInLocalRunMode() and task.taskStatus.status.value < Status.WaitingForRecovery.value:
+      nActiveCrabTasks += 1
+  to_act = [ (task, 'recover') for task in to_recover ] + [ (task, 'submit') for task in to_submit ]
+  for task, action in to_act:
+    allowCrabAction = nActiveCrabTasks < maxNumberOfActiveCrabTasks
+    need_local_run, crab_task_submitted = getattr(task, action)(lawTaskManager=lawTaskManager,
+                                                                allowCrabAction=allowCrabAction)
+    if need_local_run:
+      to_run_locally.append(task)
+    if crab_task_submitted:
+      nActiveCrabTasks += 1
+  if nActiveCrabTasks >= maxNumberOfActiveCrabTasks:
+    print(f'No new crab tasks will be submitted before the number of active crab tasks decreases below {maxNumberOfActiveCrabTasks}.'
+          f' The current number of active crab tasks = {nActiveCrabTasks}.')
+  for task_name, task in tasks.items():
     stat.add(task)
   stat.report()
   stat.status["lastUpdate"] = timestamp_str()
@@ -258,18 +286,9 @@ def apply_action(action, tasks, selected_tasks, task_list_path, lawTaskManager, 
         task.taskStatus.status = Status.SubmittedToLocal
         task.saveStatus()
         task.saveCfg()
-  elif action in [ 'remove_crab_output', 'remove_final_output' ]:
-    output_names = {
-      'remove_crab_output': 'crabOutput',
-      'remove_final_output': 'finalOutput',
-    }
-    output_name = output_names[action]
+  elif action == 'remove_crab_output':
     for task_name, task in selected_tasks.items():
-      for output in task.getOutputs():
-        output_path = output[output_name]
-        if gfal_exists(output_path, voms_token=vomsToken):
-          print(f'{task.name}: removing {output_name} "{output_path}"...')
-          gfal_rm(output_path, voms_token=vomsToken, recursive=True, verbose=0)
+      task.removeProcessedFiles()
   elif action == 'kill':
     for task_name, task in selected_tasks.items():
       print(f'{task.name}: sending kill request...')
@@ -380,7 +399,9 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
 
   while True:
     last_update = datetime.datetime.now()
-    to_post_process, to_run_locally, status = update(tasks, lawTaskManager, no_status_update=no_status_update)
+    to_post_process, to_run_locally, status = update(tasks, lawTaskManager,
+                                                     main_cfg.get('maxNumberOfActiveCrabTasks', 100),
+                                                     no_status_update=no_status_update)
 
     status_path = os.path.join(work_area, 'status.json')
     with(open(status_path, 'w')) as f:
