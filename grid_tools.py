@@ -113,7 +113,7 @@ def gfal_copy_safe(input_file, output_file, voms_token=None, number_of_streams=2
   def download():
     nonlocal attempt
     attempt += 1
-    active_verbose = max(verbose + attempt if verbose > 0 else 0, 2)
+    active_verbose = min(verbose + attempt if verbose > 0 else 0, 2)
     if gfal_exists(output_file, voms_token=voms_token):
       gfal_rm(output_file, voms_token=voms_token, recursive=False)
     if gfal_exists(output_file_tmp, voms_token=voms_token):
@@ -220,17 +220,20 @@ def gfal_sum(path, voms_token=None, sum_type='adler32'):
                     f'\ngfal-sum output:\n--------\n{output}--------\n{e}')
   return sum_int
 
-def gfal_rm(path, voms_token=None, recursive=False):
+def gfal_rm(path, voms_token=None, recursive=False, verbose=0, timeout=1800):
   if voms_token is None:
     voms_token = get_voms_proxy_info()['path']
-  cmd = ['gfal-rm']
+  cmd = ['gfal-rm', '-t', str(timeout)]
   if recursive:
     cmd.append('-r')
   cmd.append(path)
   try:
-    ps_call(cmd, shell=False, env={'X509_USER_PROXY': voms_token}, catch_stdout=True)
+    ps_call(cmd, shell=False, env={'X509_USER_PROXY': voms_token}, catch_stdout=(verbose==0), verbose=verbose)
   except PsCallError as e:
     raise GfalError(f'gfal_rm: unable to remove "{path}"\n{e}')
+
+def gfal_rm_recursive(path, voms_token=None, timeout=86400):
+  gfal_rm(path, voms_token=voms_token, recursive=True, verbose=1, timeout=timeout)
 
 def gfal_rename(path, new_path, voms_token=None):
   if voms_token is None:
