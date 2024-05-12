@@ -14,7 +14,7 @@ if __name__ == "__main__":
   __package__ = os.path.split(file_dir)[-1]
 
 from .run_tools import PsCallError
-from .grid_tools import gfal_copy_safe, copy_remote_file, get_voms_proxy_info, GfalError
+from .grid_tools import gfal_exists, gfal_copy_safe, gfal_check_write, copy_remote_file, get_voms_proxy_token, GfalError
 
 _error_msg_fmt = '''
 <FrameworkError ExitStatus="{}" Type="Fatal error" >
@@ -103,8 +103,26 @@ def convertParams(cfg_params):
 def processFile(jobModule, file_id, input_file, outputs, cmd_line_args, params, voms_token):
   cmssw_report = f'{_cmssw_report_name}_{file_id}{_cmssw_report_ext}'
   result = False
+  unable_to_write_output = False
   tmp_files = []
   exception = None
+  need_to_run = False
+  for output in outputs:
+    if 'remote_path' in output:
+      if not gfal_exists(output['remote_path'], voms_token):
+        need_to_run = True
+        can_write, exception = gfal_check_write(output['remote_path'], return_exception=True,
+                                                voms_token=voms_token, verbose=1)
+        if not can_write:
+          print(f"Check write failed for {input_file} into {output['remote_path']}.")
+          return False, True, exception
+    else:
+      need_to_run = True
+
+  if not need_to_run:
+    print(f'All outputs already exist for {input_file}. Skip processing.')
+    return True, False, None
+
   try:
     if input_file.startswith('file:') or not params.copyInputsToLocal:
       module_input_file = input_file
@@ -115,10 +133,11 @@ def processFile(jobModule, file_id, input_file, outputs, cmd_line_args, params, 
       copy_remote_file(input_file, local_file, inputDBS=params.inputDBS, custom_pfns_prefix=params.inputPFNSprefix, verbose=1)
       module_input_file = f'file:{local_file}'
     jobModule.processFile(module_input_file, outputs, tmp_files, cmssw_report, cmd_line_args, params)
+    unable_to_write_output = True
     for output in outputs:
-      if len(output['output_pfn']):
-        gfal_copy_safe(output['file_name'], os.path.join(output['output_pfn'], output['file_name']),
-                       voms_token, verbose=1)
+      if 'remote_path' in output:
+        gfal_copy_safe(output['file_name'], output['remote_path'], voms_token=voms_token, verbose=1)
+    unable_to_write_output = False
     result = True
   except (GfalError, PsCallError, Exception) as e:
     print(traceback.format_exc())
@@ -132,7 +151,7 @@ def processFile(jobModule, file_id, input_file, outputs, cmd_line_args, params, 
   for output in outputs:
     if len(output['output_pfn']) > 0 and os.path.exists(output['file_name']):
       os.remove(output['file_name'])
-  return result, exception
+  return result, unable_to_write_output, exception
 
 def runJob(cmd_line_args):
   pset_path = 'PSet.py'
@@ -162,7 +181,7 @@ def runJob(cmd_line_args):
       raise RuntimeError(f'Empty output file name.')
     outputs.append(output_desc)
 
-  voms_token = get_voms_proxy_info()['path']
+  voms_token = get_voms_proxy_token()
 
   if len(cfg_params.datasetFiles) > 0:
     with open(cfg_params.datasetFiles, 'r') as f:
@@ -181,13 +200,19 @@ def runJob(cmd_line_args):
         output['file_name'] = f'{outputFileBase}_{file_id}{outputExt}'
       else:
         output['file_name'] = f'{outputFileBase}_{file_id}_{recoveryIndex}{outputExt}'
-    result, exception = processFile(jobModule, file_id, file, outputs, cmd_line_args, cfg_params, voms_token)
+      if len(output['output_pfn']) > 0:
+        output['remote_path'] = os.path.join(output['output_pfn'], output['file_name'])
+    result, unable_to_write_output, exception = processFile(jobModule, file_id, file, outputs, cmd_line_args,
+                                                            cfg_params, voms_token)
     if result:
       has_at_least_one_success = True
     else:
       print(f"Failed to process {file}")
       if cfg_params.mustProcessAllInputs:
         raise exception
+    if unable_to_write_output:
+      print(f"Unable to write output for {file}. Stop processing.")
+      raise exception
 
   if not has_at_least_one_success:
     raise RuntimeError("Processing has failed for all input files.")

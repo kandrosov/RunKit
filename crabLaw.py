@@ -68,7 +68,6 @@ class LawTaskManager:
   def get_cfg(self):
     cfg_ext = []
     entry_jobs = {}
-    special_job = -1
     for entry in self.cfg:
       entry_ext = copy.deepcopy(entry)
       entry_ext['dependencies'] = []
@@ -79,11 +78,14 @@ class LawTaskManager:
       entry_jobs[task_work_area][task_grid_job_id] = entry_ext
       cfg_ext.append(entry_ext)
     for task_work_area, jobs in entry_jobs.items():
-      if special_job in jobs:
-        special_entry = jobs[special_job]
-        for task_grid_job_id, entry in jobs.items():
-          if task_grid_job_id != special_job:
-            special_entry['dependencies'].append(entry['done_flag'])
+      for job_id, job_entry in jobs.items():
+        if job_id < 0:
+          if job_id == -1:
+            for task_grid_job_id, entry in jobs.items():
+              if task_grid_job_id >= 0:
+                job_entry['dependencies'].append(entry['done_flag'])
+          elif job_id+1 in jobs:
+            job_entry['dependencies'].append(jobs[job_id+1]['done_flag'])
     return cfg_ext
 
   def select_branches(self, task_work_areas):
@@ -173,7 +175,11 @@ class ProdTask(HTCondorWorkflow, law.LocalWorkflow):
     try:
       work_area, grid_job_id, done_flag, dependencies, failed_flag, ready_to_run = self.branch_data
       task = CrabTask.Load(workArea=work_area)
-      if grid_job_id == -1:
+      if grid_job_id == -2:
+        if task.taskStatus.status == Status.PostProcessingFinished:
+          task.removeCrabOutputs()
+          self.output().touch()
+      elif grid_job_id == -1:
         done = False
         if task.taskStatus.status in [ Status.CrabFinished, Status.PostProcessingFinished ]:
           try:

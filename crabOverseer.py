@@ -174,6 +174,7 @@ def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=F
   print_ts("Updating...")
   stat = TaskStat()
   to_post_process = []
+  to_remove_output = []
   to_run_locally = []
   to_submit = []
   to_recover = []
@@ -196,7 +197,6 @@ def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=F
           task.saveStatus()
           task.saveCfg()
           print(f'{task.name}: post-processing is done.')
-          task.removeProcessedFiles()
         else:
           failed_flag = task.getPostProcessingFaliedFlagFile()
           if os.path.exists(failed_flag):
@@ -212,9 +212,22 @@ def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=F
         task.taskStatus.status = Status.WaitingForRecovery
         task.saveStatus()
         to_recover.append(task)
+    if task.taskStatus.status == Status.PostProcessingFinished:
+      if task.crabOutputDirExists():
+        done_flag = task.getCrabOutputRemoveDoneFlagFile()
+        lawTaskManager.add(task.workArea, -2, done_flag)
+        if os.path.exists(done_flag):
+          os.remove(done_flag)
+        to_remove_output.append(task)
+      else:
+        task.taskStatus.status = Status.Finished
+        task.saveStatus()
+        print(f'{task.name}: finished.')
+
   nActiveCrabTasks = 0
   for task_name, task in tasks.items():
-    if not task.isInLocalRunMode() and task.taskStatus.status.value < Status.WaitingForRecovery.value:
+    if not task.isInLocalRunMode() and task.taskStatus.status.value < Status.WaitingForRecovery.value \
+        and task.taskStatus.status.value > Status.Defined.value:
       nActiveCrabTasks += 1
   to_act = [ (task, 'recover') for task in to_recover ] + [ (task, 'submit') for task in to_submit ]
   for task, action in to_act:
@@ -233,7 +246,7 @@ def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=F
   stat.report()
   stat.status["lastUpdate"] = timestamp_str()
   lawTaskManager.save()
-  return to_post_process, to_run_locally, stat.status
+  return to_remove_output, to_post_process, to_run_locally, stat.status
 
 def apply_action(action, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
   if action == 'print':
@@ -399,9 +412,9 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
 
   while True:
     last_update = datetime.datetime.now()
-    to_post_process, to_run_locally, status = update(tasks, lawTaskManager,
-                                                     main_cfg.get('maxNumberOfActiveCrabTasks', 100),
-                                                     no_status_update=no_status_update)
+    to_remove_output, to_post_process, to_run_locally, status = update(tasks, lawTaskManager,
+                                                                       main_cfg.get('maxNumberOfActiveCrabTasks', 100),
+                                                                       no_status_update=no_status_update)
 
     status_path = os.path.join(work_area, 'status.json')
     with(open(status_path, 'w')) as f:
@@ -421,7 +434,9 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
       print(f'HTML report is updated in {htmlReportDest}.')
       htmlUpdated = True
 
-    if len(to_run_locally) > 0 or len(to_post_process) > 0:
+    if len(to_remove_output) > 0 or len(to_run_locally) > 0 or len(to_post_process) > 0:
+      if len(to_remove_output) > 0:
+        print_ts("To remove output: " + ', '.join([ task.name for task in to_remove_output ]))
       if len(to_run_locally) > 0:
         print_ts("To run on local grid: " + ', '.join([ task.name for task in to_run_locally ]))
       if len(to_post_process) > 0:
@@ -453,7 +468,7 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
         cmd.extend(['--requirements', local_proc_params['requirements']])
       if len(all_tasks) != len(tasks):
         task_work_areas = []
-        for task in to_run_locally + to_post_process:
+        for task in to_remove_output + to_run_locally + to_post_process:
           task_work_areas.append(task.workArea)
         selected_branches = lawTaskManager.select_branches(task_work_areas)
         if len(selected_branches) == 0:
@@ -461,12 +476,10 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
         branches_str = ','.join([ str(branch) for branch in selected_branches ])
         cmd.extend(['--branches', branches_str])
       ps_call(cmd)
-      for task in to_post_process + to_run_locally:
-        task.updateStatusFromFile()
       print_ts("Local grid processing iteration finished.")
     has_unfinished = False
     for task_name, task in tasks.items():
-      if task.taskStatus.status not in [ Status.PostProcessingFinished, Status.Failed ]:
+      if task.taskStatus.status not in [ Status.Finished, Status.Failed ]:
         has_unfinished = True
         break
 

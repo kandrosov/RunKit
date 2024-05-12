@@ -14,6 +14,7 @@ class Status(Enum):
   CrabFinished = 7
   PostProcessingFinished = 8
   Failed = 9
+  Finished = 10
 
 class StatusOnServer(Enum):
   QUEUED = 1

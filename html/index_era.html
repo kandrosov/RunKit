@@ -89,10 +89,6 @@
                     entry["size_report"] = entry["name"] + "_size.html";
                     entry["doc_report"] = entry["name"] + "_doc.html";
                 }
-                <!-- for(var entry in data["datasets"]) {
-                    console.log(entry);
-                }
- -->
                 var db = {
                     loadData: function(filter) {
                         return $.grep(data["datasets"], function(item) {

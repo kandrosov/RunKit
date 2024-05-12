@@ -13,6 +13,7 @@ from .run_tools import ps_call, repeat_until_success, adler32sum, PsCallError
 
 COPY_TMP_SUFFIX = '.tmp'
 COPY_TMP_LOCAL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.gfal_copy_safe_tmp')
+CHECK_WRITE_SUFFIX = '.check'
 
 class FileInfo:
   def __init__(self, name=None, path=None, size=None, date=None, is_dir=None):
@@ -49,6 +50,11 @@ def get_voms_proxy_info():
     h,m,s = info['timeleft'].split(':')
     info['timeleft'] = float(h) + ( float(m) + float(s) / 60. ) / 60.
   return info
+
+def get_voms_proxy_token(voms_token=None):
+  if voms_token is None:
+    return get_voms_proxy_info()['path']
+  return voms_token
 
 def check_download(local_file, expected_adler32sum=None, raise_error=False, remote_file=None,
                    remove_bad_file=False):
@@ -91,10 +97,15 @@ def xrd_copy(input_remote_file, output_local_file, n_retries=4, n_retries_xrdcp=
   repeat_until_success(download, opt_list=optlist, n_retries=n_retries, retry_sleep_interval=retry_sleep_interval,
                        exception=GfalError(f'Unable to copy {input_remote_file} from remote.'), verbose=verbose)
 
+def create_tmp_local_file():
+  if not os.path.exists(COPY_TMP_LOCAL_FILE):
+    with open(COPY_TMP_LOCAL_FILE, 'w') as f:
+      f.write('0')
+  return COPY_TMP_LOCAL_FILE
+
 def gfal_copy_safe(input_file, output_file, voms_token=None, number_of_streams=2, timeout=7200,
                    expected_adler32sum=None, n_retries=4, retry_sleep_interval=10, copy_mode='copy_flag', verbose=1):
-  if voms_token is None:
-    voms_token = get_voms_proxy_info()['path']
+  voms_token = get_voms_proxy_token(voms_token)
   if expected_adler32sum is None:
     try:
       expected_adler32sum = gfal_sum(input_file, voms_token=voms_token, sum_type='adler32')
@@ -104,9 +115,7 @@ def gfal_copy_safe(input_file, output_file, voms_token=None, number_of_streams=2
   if copy_mode not in ['copy_rename', 'copy_flag']:
     raise RuntimeError(f'gfal_copy_safe: unknown copy mode "{copy_mode}".')
   if copy_mode == 'copy_flag':
-    if not os.path.exists(COPY_TMP_LOCAL_FILE):
-      with open(COPY_TMP_LOCAL_FILE, 'w') as f:
-        f.write('0')
+    tmp_local_file = create_tmp_local_file()
   output_file_tmp = output_file + COPY_TMP_SUFFIX
   output_file_sum_target = output_file if copy_mode == 'copy_flag' else output_file_tmp
   attempt = -1
@@ -119,7 +128,7 @@ def gfal_copy_safe(input_file, output_file, voms_token=None, number_of_streams=2
     if gfal_exists(output_file_tmp, voms_token=voms_token):
       gfal_rm(output_file_tmp, voms_token=voms_token, recursive=False)
     if copy_mode == 'copy_flag':
-      gfal_copy(COPY_TMP_LOCAL_FILE, output_file_tmp, voms_token=voms_token, number_of_streams=number_of_streams,
+      gfal_copy(tmp_local_file, output_file_tmp, voms_token=voms_token, number_of_streams=number_of_streams,
                 timeout=timeout, verbose=active_verbose)
       gfal_copy(input_file, output_file, voms_token=voms_token, number_of_streams=number_of_streams,
                 timeout=timeout, verbose=active_verbose)
@@ -142,8 +151,7 @@ def gfal_copy_safe(input_file, output_file, voms_token=None, number_of_streams=2
                        exception=GfalError(f'Unable to copy "{input_file}" to "{output_file}".'))
 
 def gfal_copy(input_file, output_file, voms_token=None, number_of_streams=2, timeout=7200, verbose=1):
-  if voms_token is None:
-    voms_token = get_voms_proxy_info()['path']
+  voms_token = get_voms_proxy_token(voms_token)
   try:
     catch_output = verbose == 0
     cmd = [ 'gfal-copy', '--parent', '--nbstreams', str(number_of_streams), '--timeout', str(timeout) ]
@@ -157,8 +165,7 @@ def gfal_copy(input_file, output_file, voms_token=None, number_of_streams=2, tim
     raise GfalError(f'gfal_copy: unable to copy "{input_file}" to "{output_file}"\n{e}')
 
 def gfal_ls(path, voms_token=None, catch_stderr=False, verbose=1):
-  if voms_token is None:
-    voms_token = get_voms_proxy_info()['path']
+  voms_token = get_voms_proxy_token(voms_token)
   try:
     _, output, _ = ps_call([ 'gfal-ls', '--long', '--all', '--time-style', 'long-iso', path ],
                            shell=False, env={'X509_USER_PROXY': voms_token}, catch_stdout=True,
@@ -185,9 +192,7 @@ def gfal_ls(path, voms_token=None, catch_stderr=False, verbose=1):
   return files
 
 def gfal_ls_recursive(path, voms_token=None, verbose=1):
-  if voms_token is None:
-    voms_token = get_voms_proxy_info()['path']
-
+  voms_token = get_voms_proxy_token(voms_token)
   all_files = []
   path_files = gfal_ls(path, voms_token=voms_token, verbose=verbose)
   for file in path_files:
@@ -205,9 +210,22 @@ def gfal_ls_safe(path, voms_token=None, catch_stderr=False, verbose=1):
 def gfal_exists(path, voms_token=None):
   return gfal_ls_safe(path, voms_token=voms_token, catch_stderr=True, verbose=0) is not None
 
+def gfal_check_write(path, return_exception=False, voms_token=None, verbose=0):
+  voms_token = get_voms_proxy_token(voms_token)
+  target_path = path + CHECK_WRITE_SUFFIX
+  tmp_local_file = create_tmp_local_file()
+  result = (True, None)
+  try:
+    gfal_copy(tmp_local_file, target_path, voms_token=voms_token, verbose=verbose)
+    gfal_rm(target_path, voms_token=voms_token, verbose=verbose)
+  except GfalError as e:
+    result = (False, e)
+  if return_exception:
+    return result
+  return result[0]
+
 def gfal_sum(path, voms_token=None, sum_type='adler32'):
-  if voms_token is None:
-    voms_token = get_voms_proxy_info()['path']
+  voms_token = get_voms_proxy_token(voms_token)
   try:
     _, output, _ = ps_call(['gfal-sum', path, sum_type ],
                           shell=False, env={'X509_USER_PROXY': voms_token}, catch_stdout=True)
@@ -221,8 +239,7 @@ def gfal_sum(path, voms_token=None, sum_type='adler32'):
   return sum_int
 
 def gfal_rm(path, voms_token=None, recursive=False, verbose=0, timeout=1800):
-  if voms_token is None:
-    voms_token = get_voms_proxy_info()['path']
+  voms_token = get_voms_proxy_token(voms_token)
   cmd = ['gfal-rm', '-t', str(timeout)]
   if recursive:
     cmd.append('-r')
@@ -236,8 +253,7 @@ def gfal_rm_recursive(path, voms_token=None, timeout=86400):
   gfal_rm(path, voms_token=voms_token, recursive=True, verbose=1, timeout=timeout)
 
 def gfal_rename(path, new_path, voms_token=None):
-  if voms_token is None:
-    voms_token = get_voms_proxy_info()['path']
+  voms_token = get_voms_proxy_token(voms_token)
   try:
     ps_call(['gfal-rename', path, new_path], shell=False, env={'X509_USER_PROXY': voms_token}, catch_stdout=True)
   except PsCallError as e:
@@ -293,9 +309,7 @@ def das_file_pfns(file, disk_only=True, return_adler32=False, inputDBS='global',
 
 def copy_remote_file(input_remote_file, output_local_file, inputDBS='global', n_retries=4, retry_sleep_interval=10,
                      custom_pfns_prefix='', voms_token=None, verbose=1):
-  if voms_token is None:
-    voms_token = get_voms_proxy_info()['path']
-
+  voms_token = get_voms_proxy_token(voms_token)
   from_das = input_remote_file.startswith('/store/')
   if from_das:
     pfns_list, adler32 = das_file_pfns(input_remote_file, disk_only=True, return_adler32=True, inputDBS=inputDBS,

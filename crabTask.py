@@ -15,7 +15,8 @@ if __name__ == "__main__":
 from .crabTaskStatus import CrabTaskStatus, Status, JobStatus, LogEntryParser, StatusOnScheduler, StatusOnServer
 from .run_tools import PsCallError, ps_call, natural_sort, timestamp_str, adler32sum
 from .grid_tools import get_voms_proxy_info, path_to_pfn, gfal_copy_safe, gfal_ls_safe, das_file_pfns, \
-                        gfal_copy, GfalError, COPY_TMP_SUFFIX, gfal_exists, gfal_rm, gfal_ls_recursive
+                        gfal_copy, GfalError, COPY_TMP_SUFFIX, gfal_exists, gfal_rm, gfal_ls_recursive, \
+                        gfal_check_write, gfal_rm_recursive
 from .envToJson import get_cmsenv
 from .getFileRunLumi import getFileRunLumi
 
@@ -421,6 +422,9 @@ class Task:
   def getPostProcessingFaliedFlagFile(self):
     return os.path.join(self.workArea, 'post_processing_failed.txt')
 
+  def getCrabOutputRemoveDoneFlagFile(self):
+    return os.path.join(self.workArea, 'remove_crab_output_done.txt')
+
   def getGridJobDoneFlagDir(self):
     return os.path.join(self.workArea, 'grid_jobs_results')
 
@@ -438,6 +442,7 @@ class Task:
 
   def submit(self, lawTaskManager=None, allowCrabAction=True):
     self.getDatasetFiles()
+    self.checkOutputWriteAccess()
     if self.isInLocalRunMode():
       self.taskStatus = CrabTaskStatus()
       self.taskStatus.status = Status.SubmittedToLocal
@@ -674,6 +679,27 @@ class Task:
       self.saveStatus()
       self.saveCfg()
 
+  def checkOutputWriteAccess(self):
+    for output in self.getOutputs():
+      can_write, exception = gfal_check_write(output['crabOutput'], return_exception=True,
+                                              voms_token=self.getVomsToken())
+      if not can_write:
+        print(f'{self.name}: write check failed for {output["crabOutput"]}.')
+        raise exception
+
+  def crabOutputDirExists(self):
+    for output in self.getOutputs():
+      if gfal_exists(output['crabOutput'], voms_token=self.getVomsToken()):
+        return True
+    return False
+
+  def removeCrabOutputs(self):
+    print(f'{self.name}: removing crab outputs...')
+    for output in self.getOutputs():
+      if gfal_exists(output['crabOutput'], voms_token=self.getVomsToken()):
+        gfal_rm_recursive(output['crabOutput'], voms_token=self.getVomsToken())
+    print(f'{self.name}: all crab outputs have been removed.')
+
   def getProcessedFiles(self, useCacheOnly=False, resetCache=False):
     cache_file = os.path.join(self.workArea, 'processed_files.json')
     has_changes = False
@@ -770,16 +796,6 @@ class Task:
       if expect_at_least_one_job and len(self.getGridJobs(lawTaskManager=lawTaskManager)) == 0:
         raise RuntimeError(f'{self.name}: unable to reset grid jobs')
 
-  def removeProcessedFiles(self):
-    print(f'{self.name}: removing crab outputs...')
-    processedFiles = self.getProcessedFiles()
-    for output in self.getOutputs():
-      outputName = output['file']
-      for fileName, fileDesc in processedFiles.items():
-        filePath = fileDesc['outputs'][outputName]
-        if gfal_exists(filePath, voms_token=self.getVomsToken()):
-          gfal_rm(filePath, voms_token=self.getVomsToken())
-    print(f'{self.name}: all crab outputs have been removed.')
 
   def checkFilesToProcess(self, lawTaskManager=None, resetStatus=False):
     filesToProcess = self.getFilesToProcess()
