@@ -1,168 +1,169 @@
 <html>
 <head>
-    <title>Skimmed datasets</title>
-    <style>
-        h5.fixed {
-            position: fixed;
-            bottom: -10px;
-            left: 10px;
-        }
-        .total-row {
-            background-color: #808080;
-            font-weight: bold;
-        }
-        .table {
-            position:fixed;
-            top: 40px;
-            bottom: 0px;
-        }
-    </style>
+  <title>Skimmed datasets</title>
+  <style>
+    h5.fixed {
+      position: fixed;
+      bottom: -10px;
+      left: 10px;
+    }
+    .total-row {
+      background-color: #808080;
+      font-weight: bold;
+    }
+    .table {
+      position:fixed;
+      top: 40px;
+      bottom: 0px;
+    }
+  </style>
 </head>
 <body>
-    <h2 align=center id="pageTitle"></h2>
-    <div class="table">
-        <div id="jsGrid"></div>
-    </div>
+  <h2 align=center id="pageTitle"></h2>
+  <div class="table">
+    <div id="jsGrid"></div>
+  </div>
 
-    <link type="text/css" rel="stylesheet" href="../jsgrid.css" />
-    <link type="text/css" rel="stylesheet" href="../jsgrid-theme.css" />
+  <link type="text/css" rel="stylesheet" href="../jsgrid.css" />
+  <link type="text/css" rel="stylesheet" href="../jsgrid-theme.css" />
 
-    <script src="../jquery.min.js"></script>
-    <script type="text/javascript" src="../jsgrid.min.js"></script>
+  <script src="../jquery.min.js"></script>
+  <script type="text/javascript" src="../jsgrid.min.js"></script>
 
-    <script>
-        function find_match(value, filter) {
-            if(filter == null || filter == undefined) return true;
-            var f_str = filter.toString().toLowerCase();
-            if(f_str.length == 0) return true;
-            if(value == null || value == undefined) return false;
-            var v_str = value.toString().toLowerCase();
-            return v_str.match(f_str);
+  <script>
+    function find_match(value, filter) {
+      if(filter == null || filter == undefined) return true;
+      var f_str = filter.toString().toLowerCase();
+      if(f_str.length == 0) return true;
+      if(value == null || value == undefined) return false;
+      var v_str = value.toString().toLowerCase();
+      return v_str.match(f_str);
+    }
+
+    function UpdateColPos(cols) {
+      var left = $('.jsgrid-grid-body').scrollLeft() < $('.jsgrid-grid-body .jsgrid-table').width() - $('.jsgrid-grid-body').width() + 16
+          ? $('.jsgrid-grid-body').scrollLeft() : $('.jsgrid-grid-body .jsgrid-table').width() - $('.jsgrid-grid-body').width() + 16;
+      $('.jsgrid-header-row th:nth-child(-n+' + cols + '), .jsgrid-filter-row td:nth-child(-n+' + cols + '), .jsgrid-insert-row td:nth-child(-n+' + cols + '), .jsgrid-grid-body tr td:nth-child(-n+' + cols + ')')
+          .css({
+              "position": "relative",
+              "left": left
+          });
+    }
+
+    columns = [
+      { name: "name", title: "Name", type: "text", width: 100, editing: false },
+      { name: "dataset", title: "Dataset", type: "text", width: 200, editing: false },
+      { name: "size", title: "Size (GiB)", type: "number", width: 50, editing: false,
+        itemTemplate: function(value) {
+          return (value / 1073741824.).toFixed(2);
         }
-
-        function UpdateColPos(cols) {
-            var left = $('.jsgrid-grid-body').scrollLeft() < $('.jsgrid-grid-body .jsgrid-table').width() - $('.jsgrid-grid-body').width() + 16
-                ? $('.jsgrid-grid-body').scrollLeft() : $('.jsgrid-grid-body .jsgrid-table').width() - $('.jsgrid-grid-body').width() + 16;
-            $('.jsgrid-header-row th:nth-child(-n+' + cols + '), .jsgrid-filter-row td:nth-child(-n+' + cols + '), .jsgrid-insert-row td:nth-child(-n+' + cols + '), .jsgrid-grid-body tr td:nth-child(-n+' + cols + ')')
-                .css({
-                    "position": "relative",
-                    "left": left
-                });
+      },
+      { name: "n_files", title: "Number of files", type: "number", width: 50, editing: false },
+      { name: "n_selected", title: "Number of selected events", type: "number", width: 50, editing: false },
+      { name: "n_not_selected", title: "Number of not selected events", type: "number", width: 50, editing: false },
+      { name: "size_report", title: "Size report", type: "textarea", width: 30, editing: false,
+        itemTemplate: function(value) {
+          var x = $("<a>");
+          if (value != null && value != undefined && value.length > 0) {
+            x.attr("href", value).attr("target", "_blank").text("link");
+          }
+          return x;
         }
+      },
+      { name: "doc_report", title: "Self-doc", type: "textarea", width: 30, editing: false,
+        itemTemplate: function(value) {
+          var x = $("<a>");
+          if (value != null && value != undefined && value.length > 0) {
+            x.attr("href", value).attr("target", "_blank").text("link");
+          }
+          return x;
+        }
+      },
+    ];
+    all_columns = columns.slice(0);
 
-        columns = [
-            { name: "name", title: "Name", type: "text", width: 100, editing: false },
-            { name: "dataset", title: "Dataset", type: "text", width: 200, editing: false },
-            { name: "size", title: "Size (GiB)", type: "number", width: 50, editing: false,
-                itemTemplate: function(value) {
-                    return (value / 1073741824.).toFixed(2);
-                } },
-            { name: "n_files", title: "Number of files", type: "number", width: 50, editing: false },
-            { name: "n_selected", title: "Number of selected events", type: "number", width: 50, editing: false },
-            { name: "n_not_selected", title: "Number of not selected events", type: "number", width: 50, editing: false },
-            { name: "size_report", title: "Size report", type: "textarea", width: 30, editing: false,
-              itemTemplate: function(value) {
-                    var x = $("<a>");
-                    if (value != null && value != undefined && value.length > 0) {
-                        x.attr("href", value).attr("target", "_blank").text("link");
-                    }
-                    return x;
-                } },
-            { name: "doc_report", title: "Self-doc", type: "textarea", width: 30, editing: false,
-            itemTemplate: function(value) {
-                    var x = $("<a>");
-                    if (value != null && value != undefined && value.length > 0) {
-                        x.attr("href", value).attr("target", "_blank").text("link");
-                    }
-                    return x;
-                } },
-          ];
-        all_columns = columns.slice(0);
-
-        var xmlhttp = new XMLHttpRequest();
-        xmlhttp.onreadystatechange = function() {
-            if (this.readyState == 4 && this.status == 200) {
-                var data = JSON.parse(this.responseText);
-                console.log("loading data")
-                $("#pageTitle").text(data["title"]);
-                for(var entry in data["datasets"]) {
-                    entry["size_report"] = entry["name"] + "_size.html";
-                    entry["doc_report"] = entry["name"] + "_doc.html";
-                }
-                var db = {
-                    loadData: function(filter) {
-                        return $.grep(data["datasets"], function(item) {
-                            for(var c = 0; c < columns.length; c++) {
-                                var c_name = columns[c]["name"];
-                                var match_found = find_match(item[c_name], filter[c_name]);
-                                //console.log(c_name, item[c_name], filter, match_found);
-                                if(!find_match(item[c_name], filter[c_name])) return false;
-                            }
-                            return true;
-                        });
-                    },
-                };
-
-                var originalFilterTemplate = jsGrid.fields.text.prototype.filterTemplate;
-                jsGrid.fields.text.prototype.filterTemplate = function() {
-                    var grid = this._grid;
-                    var $result = originalFilterTemplate.call(this);
-                    $result.on("keyup", function(e) {
-                        if(this.timeout)
-                            clearTimeout(this.timeout);
-                        this.timeout = setTimeout(function(){
-                            grid.search();
-                        }, 300);
-                    });
-                    return $result;
-                };
-
-                $("#jsGrid").jsGrid({
-                    width: "100%",
-                    height: "100%",
-
-                    filtering: true,
-                    inserting: false,
-                    editing: false,
-                    sorting: true,
-                    paging: true,
-                    autoload: true,
-
-                    pageSize: 100,
-                    pageButtonCount: 10,
-                    controller: db,
-
-                    pagerFormat: "{itemCount} datasets. Pages: {first} {prev} {pages} {next} {last}    {pageIndex} of {pageCount}",
-
-                    fields: all_columns,
-
-                    onRefreshed: function(args) {
-                        var items = args.grid.option("data");
-                        var total = {
-                            name: "Total",
-                            size: 0.0,
-                            n_files: 0,
-                            n_selected: 0,
-                            n_not_selected: 0,
-                        };
-                        items.forEach(function(item) {
-                            total.size += item.size;
-                            total.n_files += item.n_files;
-                            total.n_selected += item.n_selected;
-                            total.n_not_selected += item.n_not_selected;
-                        });
-                        var $totalRow = $("<tr>").addClass("total-row");
-                        args.grid._renderCells($totalRow, total);
-                        args.grid._content.prepend($totalRow);
-                    },
-
-                });
-
-                $('.jsgrid-grid-body').scroll(function () { UpdateColPos(1); });
-            }
+    var xmlhttp = new XMLHttpRequest();
+    xmlhttp.onreadystatechange = function() {
+      if (this.readyState == 4 && this.status == 200) {
+        var data = JSON.parse(this.responseText);
+        console.log("loading data")
+        $("#pageTitle").text(data["title"]);
+        for(var entry_id = 0; entry_id < data["datasets"].length; entry_id++) {
+          var entry = data["datasets"][entry_id];
+          entry["size_report"] = entry["name"] + "_size.html";
+          entry["doc_report"] = entry["name"] + "_doc.html";
+        }
+        var db = {
+          loadData: function(filter) {
+            return $.grep(data["datasets"], function(item) {
+              for(var c = 0; c < columns.length; c++) {
+                var c_name = columns[c]["name"];
+                var match_found = find_match(item[c_name], filter[c_name]);
+                //console.log(c_name, item[c_name], filter, match_found);
+                if(!find_match(item[c_name], filter[c_name])) return false;
+              }
+              return true;
+            });
+          },
         };
-        xmlhttp.open("GET", "datasets.json", true);
-        xmlhttp.send();
-    </script>
+
+        var originalFilterTemplate = jsGrid.fields.text.prototype.filterTemplate;
+        jsGrid.fields.text.prototype.filterTemplate = function() {
+          var grid = this._grid;
+          var $result = originalFilterTemplate.call(this);
+          $result.on("keyup", function(e) {
+            if(this.timeout)
+              clearTimeout(this.timeout);
+            this.timeout = setTimeout(function(){ grid.search(); }, 300);
+          });
+          return $result;
+        };
+
+        $("#jsGrid").jsGrid({
+          width: "100%",
+          height: "100%",
+
+          filtering: true,
+          inserting: false,
+          editing: false,
+          sorting: true,
+          paging: true,
+          autoload: true,
+
+          pageSize: 100,
+          pageButtonCount: 10,
+          controller: db,
+
+          pagerFormat: "{itemCount} datasets. Pages: {first} {prev} {pages} {next} {last}    {pageIndex} of {pageCount}",
+
+          fields: all_columns,
+
+          onRefreshed: function(args) {
+            var items = args.grid.option("data");
+            var total = {
+              name: "Total",
+              size: 0.0,
+              n_files: 0,
+              n_selected: 0,
+              n_not_selected: 0,
+            };
+            items.forEach(function(item) {
+              total.size += item.size;
+              total.n_files += item.n_files;
+              total.n_selected += item.n_selected;
+              total.n_not_selected += item.n_not_selected;
+            });
+            var $totalRow = $("<tr>").addClass("total-row");
+            args.grid._renderCells($totalRow, total);
+            args.grid._content.prepend($totalRow);
+          },
+        });
+
+        $('.jsgrid-grid-body').scroll(function () { UpdateColPos(1); });
+      }
+    };
+    xmlhttp.open("GET", "datasets.json", true);
+    xmlhttp.send();
+  </script>
 </body>
 </html>
