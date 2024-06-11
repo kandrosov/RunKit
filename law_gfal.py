@@ -106,8 +106,7 @@ class GFALFileInterface(RemoteFileInterface):
         if not silent:
           raise GfalError(f'GFALFileInterface: failed to list directory {path}')
         entries = []
-      else:
-        self.ls_cache.add(path, entries)
+      self.ls_cache.add(path, entries)
     return [ entry.name for entry in entries ]
 
   @staticmethod
