@@ -796,15 +796,23 @@ class Task:
       if expect_at_least_one_job and len(self.getGridJobs(lawTaskManager=lawTaskManager)) == 0:
         raise RuntimeError(f'{self.name}: unable to reset grid jobs')
 
+  def fileSourcesFile(self):
+      return os.path.join(self.workArea, 'file_sources.json')
 
-  def checkFilesToProcess(self, lawTaskManager=None, resetStatus=False):
+  def checkFilesToProcess(self, lawTaskManager=None, resetStatus=False, force_update=False):
     filesToProcess = self.getFilesToProcess()
     print(f'dataset={self.inputDataset}')
     tmp_dir = tempfile.mkdtemp(dir=os.environ.get('TMPDIR', '/tmp'))
     pfnsPrefix = self.params.get('inputPFNSprefix', None)
     has_status_changes = False
+    if not force_update and os.path.exists(self.fileSourcesFile()):
+      with open(self.fileSourcesFile(), 'r') as f:
+        file_sources = json.load(f)
+    else:
+      file_sources = {}
     for file in filesToProcess:
       file_out = os.path.join(tmp_dir, os.path.basename(file))
+      file_out_edm = file_out + '_edm.root'
       print(f'  {file}')
       sources = []
       if pfnsPrefix is not None:
@@ -813,31 +821,45 @@ class Task:
       else:
         sources, expected_adler32sum = das_file_pfns(file, disk_only=False, return_adler32=True,
                                                      inputDBS=self.inputDBS, verbose=0)
-      has_at_least_one_valid_source = False
-      for pfn_type, pfn_list in sources.items():
-        for pfn in pfn_list:
-          ok = True
-          try:
-            if pfn_type == 'TAPE':
-              msg = 'no user access'
-              ok = False
-            else:
-              gfal_copy(pfn, file_out, voms_token=self.getVomsToken(), verbose=0)
-              if expected_adler32sum is not None:
-                asum = adler32sum(file_out)
-                if asum != expected_adler32sum:
-                  msg = f'adler32sum mismatch. Expected = {expected_adler32sum:x}, got = {asum:x}.'
-                  ok = False
-          except GfalError as e:
-            msg = 'gfal-copy failed'
-            ok = False
-          if os.path.exists(file_out):
-            os.remove(file_out)
-          if ok:
-            msg = "OK"
-            has_at_least_one_valid_source = True
-          print(f'    {pfn}: type={pfn_type} {msg}')
-      if has_at_least_one_valid_source and resetStatus:
+      def isValidSource(pfn_type, pfn):
+        if pfn_type == 'TAPE':
+          return False, 'no user access'
+        try:
+          gfal_copy(pfn, file_out, voms_token=self.getVomsToken(), verbose=0)
+        except GfalError as e:
+          return False, 'gfal-copy failed'
+        if expected_adler32sum is not None:
+          asum = adler32sum(file_out)
+          if asum != expected_adler32sum:
+            return False, f'adler32sum mismatch. Expected = {expected_adler32sum:x}, got = {asum:x}.'
+        try:
+          ps_call([ 'edmCopyPickMerge', f'inputFiles=file:{file_out}', f'outputFile={file_out_edm}' ],
+                  catch_stderr=True, catch_stdout=True, verbose=0, env=self.getCmsswEnv(),
+                  singularity_cmd=self.singularity_cmd)
+        except PsCallError as e:
+          return False, 'edmCopyPickMerge failed'
+        return True, 'OK'
+
+      def findValidSource():
+        for pfn_type, pfn_list in sources.items():
+          for pfn in pfn_list:
+            if pfn not in file_sources.get(file, {}):
+              is_valid, msg = isValidSource(pfn_type, pfn)
+              for f in [ file_out, file_out_edm ]:
+                if os.path.exists(f):
+                  os.remove(f)
+              if file not in file_sources:
+                file_sources[file] = {}
+              file_sources[file][pfn] = { 'valid': is_valid, 'msg': msg, 'pfn_type': pfn_type }
+            is_valid = file_sources[file][pfn]['valid']
+            msg = file_sources[file][pfn]['msg']
+            print(f'    {pfn}: type={pfn_type} {msg}')
+            if is_valid:
+              return pfn
+        return None
+
+      valid_source = findValidSource()
+      if valid_source is not None and resetStatus:
         has_status_changes = True
         self.recoveryIndex = self.maxRecoveryCount
         self.resetGridJobs(file=file, lawTaskManager=lawTaskManager)
@@ -845,6 +867,9 @@ class Task:
     if has_status_changes:
       self.saveStatus()
       self.saveCfg()
+    if len(file_sources) > 0:
+      with open(self.fileSourcesFile(), 'w') as f:
+        json.dump(file_sources, f, indent=2)
 
   def ignoreMissingFiles(self, lawTaskManager=None):
     filesToProcess = self.getFilesToProcess()

@@ -30,8 +30,9 @@ def update_kinit_thread():
   cond.release()
 
 class LawTaskManager:
-  def __init__(self, cfg_path):
+  def __init__(self, cfg_path, law_task_dir=None):
     self.cfg_path = cfg_path
+    self.law_task_dir = law_task_dir
     if os.path.exists(cfg_path):
       with open(cfg_path, 'r') as f:
         self.cfg = json.load(f)
@@ -60,6 +61,8 @@ class LawTaskManager:
     self.has_updates = True
 
   def find(self, task_work_area, task_grid_job_id):
+    task_work_area = os.path.abspath(task_work_area)
+    task_grid_job_id = int(task_grid_job_id)
     for entry in self.cfg:
       if entry['task_work_area'] == task_work_area and entry['task_grid_job_id'] == task_grid_job_id:
         return entry

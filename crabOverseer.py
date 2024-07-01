@@ -6,6 +6,9 @@ import shutil
 import sys
 import yaml
 
+from abc import ABC, abstractmethod
+from collections import OrderedDict
+
 if __name__ == "__main__":
   file_dir = os.path.dirname(os.path.abspath(__file__))
   sys.path.append(os.path.dirname(file_dir))
@@ -40,7 +43,7 @@ class TaskStat:
   def add(self, task):
     self.all_tasks.append(task)
 
-    useCacheOnly = task.taskStatus.status in [ Status.CrabFinished, Status.PostProcessingFinished, Status.Failed ]
+    useCacheOnly = task.taskStatus.status.value >= Status.CrabFinished.value
     n_files_total, n_files_processed, n_files_to_process, n_files_ignored = \
       task.getFilesStats(useCacheOnly=useCacheOnly)
     self.n_files_total += n_files_total
@@ -230,6 +233,8 @@ def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=F
         and task.taskStatus.status.value > Status.Defined.value:
       nActiveCrabTasks += 1
   to_act = [ (task, 'recover') for task in to_recover ] + [ (task, 'submit') for task in to_submit ]
+  if len(to_act) > 0:
+    print_ts(f"Applying submit/recover actions to {len(to_act)} tasks ...")
   for task, action in to_act:
     allowCrabAction = nActiveCrabTasks < maxNumberOfActiveCrabTasks
     need_local_run, crab_task_submitted = getattr(task, action)(lawTaskManager=lawTaskManager,
@@ -241,50 +246,91 @@ def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=F
   if nActiveCrabTasks >= maxNumberOfActiveCrabTasks:
     print(f'No new crab tasks will be submitted before the number of active crab tasks decreases below {maxNumberOfActiveCrabTasks}.'
           f' The current number of active crab tasks = {nActiveCrabTasks}.')
+  print_ts("Gathering statistics...")
   for task_name, task in tasks.items():
     stat.add(task)
   stat.report()
   stat.status["lastUpdate"] = timestamp_str()
+  print_ts("Saving state...")
   lawTaskManager.save()
+  print_ts("Update finished.")
   return to_remove_output, to_post_process, to_run_locally, stat.status
 
-def apply_action(action, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
-  if action == 'print':
+class Action(ABC):
+  def __init__(self, name, args):
+    self.name = name
+    self.args = args
+
+  @abstractmethod
+  def apply(self, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
+    pass
+
+class ActionHelp(Action):
+  def apply(self, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
+    ActionFactory.PrintAvailableActions()
+
+class ActionPrint(Action):
+  def apply(self, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
     for task_name, task in selected_tasks.items():
-      print(task.name)
-  elif action.startswith('run_cmd'):
-    cmd = action[len('run_cmd') + 1:]
+      print(f'{task.name} status={task.taskStatus.status.name}')
+      if task.taskStatus.status != Status.Finished:
+        for job_id, job_entry in task.taskStatus.details.items():
+          job_str = f'  job {job_id}: state={job_entry["State"]}'
+          if task.isInLocalRunMode():
+            law_job_entry = lawTaskManager.find(task.workArea, job_id)
+            if law_job_entry is not None:
+              branch_id = law_job_entry["branch_id"]
+              branch_output = os.path.join(lawTaskManager.law_task_dir, f'stdall_{branch_id}To{branch_id+1}.txt')
+              job_str += f' law_job_branch={law_job_entry["branch_id"]}'
+              if os.path.exists(branch_output):
+                job_str += f' output={branch_output}'
+          print(job_str)
+
+class ActionRunCmd(Action):
+  def apply(self, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
+    cmd = self.args
     for task_name, task in selected_tasks.items():
       exec(cmd)
       task.saveCfg()
       task.saveStatus()
-  elif action == 'list_files_to_process':
+
+class ActionListFilesToProcess(Action):
+  def apply(self, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
     for task_name, task in selected_tasks.items():
       print(f'{task.name}: files to process')
       for file in task.getFilesToProcess():
         print(f'  {file}')
-  elif action in ['check_failed', 'check_update_failed']:
+
+class ActionCheckFailed(Action):
+  def apply(self, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
     print('Checking files availability for failed tasks...')
-    resetStatus = action == 'check_update_failed'
+    resetStatus = 'check_update' in self.name
+    force_update = 'force' in self.name
     for task_name, task in selected_tasks.items():
       if task.taskStatus.status == Status.Failed:
-        task.checkFilesToProcess(lawTaskManager=lawTaskManager, resetStatus=resetStatus)
+        task.checkFilesToProcess(lawTaskManager=lawTaskManager, resetStatus=resetStatus, force_update=force_update)
     if resetStatus:
       lawTaskManager.save()
-  elif action == 'ignore_failed':
+
+class ActionIgnoreFailed(Action):
+  def apply(self, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
     print('Ignoring missing files in failed tasks...')
     for task_name, task in selected_tasks.items():
       if task.taskStatus.status == Status.Failed:
         task.ignoreMissingFiles(lawTaskManager=lawTaskManager)
-  elif action in ['check_processed', 'check_update_processed']:
+
+class ActionCheckProcessed(Action):
+  def apply(self, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
     print('Checking output files for finished but not yet post-processed tasks...')
-    resetStatus = action == 'check_update_processed'
+    resetStatus = 'check_update' in self.name
     for task_name, task in selected_tasks.items():
       if task.taskStatus.status == Status.CrabFinished:
         task.checkProcessedFiles(lawTaskManager=lawTaskManager, resetStatus=resetStatus)
     if resetStatus:
       lawTaskManager.save()
-  elif action == 'reset_local_jobs':
+
+class ActionResetLocalJobs(Action):
+  def apply(self, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
     for task_name, task in selected_tasks.items():
       if task.taskStatus.status in [ Status.Failed, Status.SubmittedToLocal ]:
         print(f'{task.name}: resetting local jobs...')
@@ -299,25 +345,66 @@ def apply_action(action, tasks, selected_tasks, task_list_path, lawTaskManager, 
         task.taskStatus.status = Status.SubmittedToLocal
         task.saveStatus()
         task.saveCfg()
-  elif action == 'remove_crab_output':
+
+class ActionRemoveCrabOutput(Action):
+  def apply(self, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
     for task_name, task in selected_tasks.items():
       task.removeProcessedFiles()
-  elif action == 'kill':
+
+class ActionKill(Action):
+  def apply(self, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
     for task_name, task in selected_tasks.items():
       print(f'{task.name}: sending kill request...')
       try:
         task.kill()
       except PsCallError as e:
         print(f'{task.name}: error sending kill request. {e}')
-  elif action == 'remove':
+
+class ActionRemove(Action):
+  def apply(self, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
     for task_name, task in selected_tasks.items():
       print(f'{task.name}: removing...')
       shutil.rmtree(task.workArea)
       del tasks[task.name]
     with open(task_list_path, 'w') as f:
       json.dump([task_name for task_name in tasks], f, indent=2)
-  else:
-    raise RuntimeError(f'Unknown action = "{action}"')
+
+class ActionFactory:
+  known_actions = OrderedDict([
+    ('help', (ActionHelp, 'print list of available actions')),
+    ('print', (ActionPrint, 'print the status of selected tasks')),
+    ('run_cmd', (ActionRunCmd, 'run a command in form of a python code for each selected task')),
+    ('list_files_to_process', (ActionListFilesToProcess, 'list files to process for selected tasks')),
+    ('check_failed', (ActionCheckFailed, 'check files availability for failed tasks')),
+    ('check_update_failed', (ActionCheckFailed, 'check files availability for failed tasks and update status, if some files are available')),
+    ('force_check_failed', (ActionCheckFailed, 'remove the cache and check files availability for failed tasks')),
+    ('force_check_update_failed', (ActionCheckFailed, 'remove the cache, check files availability for failed tasks and update status, if some files are available')),
+    ('ignore_failed', (ActionIgnoreFailed, 'ignore missing files in failed tasks')),
+    ('check_processed', (ActionCheckProcessed, 'check output files for finished but not yet post-processed tasks')),
+    ('check_update_processed', (ActionCheckProcessed, 'check output files for finished but not yet post-processed tasks and update status, if some files are missing or corrupted')),
+    ('reset_local_jobs', (ActionResetLocalJobs, 'reset local jobs for tasks that have status Failed or SubmittedToLocal')),
+    ('remove_crab_output', (ActionRemoveCrabOutput, 'remove crab output for selected tasks')),
+    ('kill', (ActionKill, 'send kill request for selected tasks')),
+    ('remove', (ActionRemove, 'remove selected tasks')),
+  ])
+
+  @staticmethod
+  def Make(action_str):
+    action_entries = action_str.split(' ', 1)
+    name = action_entries[0]
+    args = action_entries[1] if len(action_entries) > 1 else None
+    if name not in ActionFactory.known_actions:
+      ActionFactory.PrintAvailableActions()
+      print(f'Unknown action = "{name}"')
+      sys.exit(1)
+    action_class, _ = ActionFactory.known_actions[name]
+    return action_class(name, args)
+
+  @staticmethod
+  def PrintAvailableActions():
+    print('Available actions:')
+    for name, (action, desc) in ActionFactory.known_actions.items():
+      print(f'  {name}: {desc}')
 
 def check_prerequisites(main_cfg):
   voms_info = get_voms_proxy_info()
@@ -391,24 +478,32 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
     main_cfg = yaml.safe_load(f)
 
   check_prerequisites(main_cfg)
-
+  print_ts("Loading configuration...")
   task_list_path = os.path.join(work_area, 'tasks.json')
   all_tasks, selected_tasks = load_tasks(work_area, task_list_path, new_task_list_files, main_cfg, update_cfg,
                                          task_selection, task_selected_names, task_selected_status)
 
-  lawTaskManager = LawTaskManager(os.path.join(work_area, 'law_tasks.json'))
+  local_proc_params = main_cfg['localProcessing']
+  law_sub_dir = os.path.join(abs_work_area, 'law', 'jobs')
+  law_task_dir = os.path.join(law_sub_dir, local_proc_params['lawTask'])
+  law_jobs_cfg = os.path.join(law_task_dir, f'{local_proc_params["workflow"]}_jobs.json')
+
+  lawTaskManager = LawTaskManager(os.path.join(work_area, 'law_tasks.json'), law_task_dir=law_task_dir)
   vomsToken = get_voms_proxy_info()['path']
 
   for name, task in selected_tasks.items():
     task.checkConfigurationValidity()
 
   if action is not None:
-    apply_action(action, all_tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken)
+    print_ts(f"Applying action: {action}")
+    action_obj = ActionFactory.Make(action)
+    action_obj.apply(all_tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken)
     return
 
   tasks = selected_tasks
   update_interval = main_cfg.get('updateInterval', 60)
   htmlUpdated = False
+
 
   while True:
     last_update = datetime.datetime.now()
@@ -442,10 +537,6 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
       if len(to_post_process) > 0:
         print_ts("Post-processing: " + ', '.join([ task.name for task in to_post_process ]))
       print_ts(f"Total number of jobs to run on a local grid: {len(lawTaskManager.cfg)}")
-      local_proc_params = main_cfg['localProcessing']
-      law_sub_dir = os.path.join(abs_work_area, 'law', 'jobs')
-      law_jobs_cfg = os.path.join(law_sub_dir, local_proc_params['lawTask'],
-                                  f'{local_proc_params["workflow"]}_jobs.json')
 
       lawTaskManager.update_grid_jobs(law_jobs_cfg)
       n_cpus = local_proc_params.get('nCPU', 1)
@@ -525,7 +616,7 @@ if __name__ == "__main__":
   if args.select_names is not None:
     apply_selection = True
     for name in args.select_names.split(','):
-      selected_names.add(name)
+      selected_names.add(name.strip())
   if args.select_names_from_file is not None:
     apply_selection = True
     with open(args.select_names_from_file, 'r') as f:
