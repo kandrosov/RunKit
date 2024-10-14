@@ -7,17 +7,11 @@ if __name__ == "__main__":
   sys.path.append(os.path.dirname(file_dir))
   __package__ = 'RunKit'
 
-from .run_tools import ps_call
+from .grid_tools import run_dasgoclient
 
-def getFileRunLumi(inputDataset, inputDBS='global', dasOperationTimeout=None, env=None, verbose=0):
-  cmdBase = ['dasgoclient', '--query']
-  baseQuery = f'dataset={inputDataset}'
-  if inputDBS != 'global':
-    baseQuery += f' instance=prod/{inputDBS}'
-
-  def getDasInfo(cmdBase, query, mode, verbose):
-    cmd = cmdBase + [mode + ' ' + query]
-    _,output,_ = ps_call(cmd, catch_stdout=True, split='\n', timeout=dasOperationTimeout, env=env, verbose=verbose)
+def getFileRunLumi(inputDataset, inputDBS='global', timeout=None, verbose=0):
+  def getDasInfo(query, mode, verbose):
+    output = run_dasgoclient(mode + ' ' + query, inputDBS=inputDBS, timeout=timeout, verbose=verbose)
     descs = []
     for desc in output:
       desc = desc.strip()
@@ -35,8 +29,9 @@ def getFileRunLumi(inputDataset, inputDBS='global', dasOperationTimeout=None, en
 
   if verbose > 0:
     print(f'Gathering file->(run,lumi) correspondance for {inputDataset}...')
+  baseQuery = f'dataset={inputDataset}'
   fileRunLumi = {}
-  runList = sorted(getDasInfo(cmdBase, baseQuery, 'run', verbose))
+  runList = sorted(getDasInfo(baseQuery, 'run', verbose))
   nRuns = len(runList)
   nRunsWidth = len(str(nRuns))
   if verbose > 1:
@@ -46,7 +41,7 @@ def getFileRunLumi(inputDataset, inputDBS='global', dasOperationTimeout=None, en
       print(f'{run_idx+1:>{nRunsWidth}}/{nRuns} run={run}')
     runQuery = baseQuery + f' status=valid run={run}'
     runVerbose = verbose - 2 if verbose >= 2 else 0
-    for runFile, runRuns, runLumis in getDasInfo(cmdBase, runQuery, 'file,run,lumi', runVerbose):
+    for runFile, runRuns, runLumis in getDasInfo(runQuery, 'file,run,lumi', runVerbose):
       if runFile not in fileRunLumi:
         fileRunLumi[runFile] = {}
       fileRunLumi[runFile][str(run)] = runLumis

@@ -4,6 +4,13 @@ import re
 import sys
 import yaml
 
+if __name__ == "__main__":
+  file_dir = os.path.dirname(os.path.abspath(__file__))
+  sys.path.append(os.path.dirname(file_dir))
+  __package__ = 'RunKit'
+
+from .grid_tools import run_dasgoclient
+
 class CheckResult:
   def __init__(self, all_ok, tasks_by_name, tasks_by_dataset):
     self.all_ok = all_ok
@@ -111,7 +118,8 @@ class ExceptionMatcher:
   def get_unused_patterns(self):
     return set(self.exceptions.keys()) - self.used_patterns
 
-def check_task_consistency(task_name, eras, all_eras, exception_matcher, era_results, name_matching):
+def check_task_consistency(task_name, eras, all_eras, exception_matcher, era_results, name_matching,
+                           dataset_name_masks, show_only_missing_with_candidates):
   n_eras = len(all_eras)
   is_data = era_results[eras[0]].tasks_by_name[task_name][0]['isData']
   exception_match_ok, known_exceptions, known_exception_to_pattern = exception_matcher.get_known_exceptions(task_name)
@@ -128,10 +136,41 @@ def check_task_consistency(task_name, eras, all_eras, exception_matcher, era_res
     return False
   if len(eras) != n_eras and not is_data and len(missing_eras) > 0:
     missing_eras_str = ', '.join(missing_eras)
-    print(f'{task_name} is not available in: {missing_eras_str}')
+    missing_prints = [ f'{task_name} is not available in: {missing_eras_str}' ]
+    print_missing = not show_only_missing_with_candidates
+    dataset_names = set()
     for era in eras:
       for task in era_results[era].tasks_by_name[task_name]:
-        print(f'  era={era} file={task["file"]} dataset={task["inputDataset"]}')
+        missing_prints.append(f'  era={era} file={task["file"]} dataset={task["inputDataset"]}')
+        dataset_name = re.match(dataset_name_masks[era]['mc'], task["inputDataset"]).group(1)
+        if dataset_name is None or len(dataset_name) == 0:
+          raise RuntimeError(f'Unable to extract dataset name from {task["inputDataset"]} using mask {dataset_name_masks[era]["mc"]}')
+        dataset_names.add(dataset_name)
+    for missing_era in missing_eras:
+      das_candidates = set()
+      for dataset_name in dataset_names:
+        full_dataset_name = dataset_name_masks[missing_era]['mc_das'].format(dataset_name)
+        new_das_candidates = run_dasgoclient(f'dataset dataset={full_dataset_name}', verbose=0)
+        for candidate in new_das_candidates:
+          if re.match(dataset_name_masks[missing_era]['mc'], candidate):
+            add_candidate = True
+            ext_match = re.match('.*_(ext[0-9]+)', task_name)
+            if ext_match:
+              ext_str = ext_match.group(1)
+              if not re.match(f'/.+/.+[_-]{ext_str}[_-]v[0-9]+/.+', candidate):
+                add_candidate = False
+            if add_candidate:
+              das_candidates.add(candidate)
+      if len(das_candidates) > 0:
+        missing_prints.append(f'  {missing_era} potential candidates from DAS:')
+        print_missing = True
+        for candidate in das_candidates:
+          missing_prints.append(f'    {candidate}')
+      else:
+        missing_prints.append(f' {missing_era} no candidates from DAS')
+    if print_missing:
+      for line in missing_prints:
+        print(line)
     return False
   file_names = {}
   datasets = {}
@@ -164,12 +203,19 @@ def check_task_consistency(task_name, eras, all_eras, exception_matcher, era_res
       return False
   return True
 
-def check_consistency(era_files_dict, exceptions, name_matching,
-                      dataset_name_mask_mc=None, dataset_name_mask_data=None):
+def check_consistency(era_files_dict, exceptions, name_matching, dataset_name_masks, show_only_missing_with_candidates):
   era_results = {}
   tasks_by_name = {}
   all_ok = True
   for era, files in era_files_dict.items():
+    if dataset_name_masks is None:
+      dataset_name_mask_mc = None
+      dataset_name_mask_data = None
+    else:
+      if era not in dataset_name_masks:
+        raise RuntimeError(f'Era {era} is not found in dataset_name_masks')
+      dataset_name_mask_mc = dataset_name_masks[era]['mc']
+      dataset_name_mask_data = dataset_name_masks[era]['data']
     era_results[era] = check_consistency_era(files, dataset_name_mask_mc, dataset_name_mask_data)
     all_ok = all_ok and era_results[era].all_ok
     for task_name in era_results[era].tasks_by_name.keys():
@@ -180,7 +226,8 @@ def check_consistency(era_files_dict, exceptions, name_matching,
   exception_matcher = ExceptionMatcher(exceptions)
   all_eras = set(era_files_dict.keys())
   for task_name, eras in tasks_by_name.items():
-    task_consistent = check_task_consistency(task_name, eras, all_eras, exception_matcher, era_results, name_matching)
+    task_consistent = check_task_consistency(task_name, eras, all_eras, exception_matcher, era_results, name_matching,
+                                             dataset_name_masks, show_only_missing_with_candidates)
     all_ok = all_ok and task_consistent
   unused_patterns = exception_matcher.get_unused_patterns()
   if len(unused_patterns) > 0:
@@ -191,14 +238,15 @@ if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser(description='Check consistency of tasks configurations for crabOverseer.')
   parser.add_argument('--cross-eras', action='store_true', help='Check consistency of tasks across different eras.')
+  parser.add_argument('--era', type=str, required=False, default=None, help='Era')
   parser.add_argument('--exceptions', type=str, required=False, default=None,
                       help='File with exceptions for the checks.')
   parser.add_argument('--name-matching', type=str, required=False, default=[], action='append',
                       help='Matching equivalence between dataset names (multiple matching transformations accepted).')
-  parser.add_argument('--dataset-name-mask-mc', type=str, required=False, default=None,
-                      help='Expected mask for dataset names in DAS for MC')
-  parser.add_argument('--dataset-name-mask-data', type=str, required=False, default=None,
-                      help='Expected mask for dataset names in DAS for data')
+  parser.add_argument('--dataset-name-masks', type=str, required=False, default=None,
+                      help='File with expected masks for dataset names in DAS for data and MC')
+  parser.add_argument('--show-only-missing-with-candidates', action='store_true',
+                      help='Only show missing samples that have potential candidates in DAS.')
   parser.add_argument('task_file', type=str, nargs='+', help="file(s) with task descriptions")
   args = parser.parse_args()
 
@@ -211,7 +259,14 @@ if __name__ == "__main__":
         task_files = [os.path.join(root, f) for f in files if f.endswith('.yaml')]
         era_files_dict[era_name].extend(task_files)
   else:
-    era_files_dict[''] = args.task_file
+    if args.era is None:
+      raise RuntimeError("Era is not specified.")
+    era_files_dict[args.era] = args.task_file
+
+  dataset_name_masks = None
+  if args.dataset_name_masks:
+    with open(args.dataset_name_masks) as f:
+      dataset_name_masks = yaml.safe_load(f)
 
   exceptions = {}
   if args.exceptions:
@@ -219,7 +274,8 @@ if __name__ == "__main__":
       exceptions = yaml.safe_load(f)
 
 
-  all_ok = check_consistency(era_files_dict, exceptions, args.name_matching, args.dataset_name_mask_mc, args.dataset_name_mask_data)
+  all_ok = check_consistency(era_files_dict, exceptions, args.name_matching, dataset_name_masks,
+                             args.show_only_missing_with_candidates)
 
   if all_ok:
     print("All checks are successfully passed.")

@@ -274,12 +274,25 @@ def path_to_pfn(path, *sub_paths):
     pfn = path
   return os.path.join(pfn, *sub_paths)
 
-def das_file_site_info(file, inputDBS='global', verbose=0):
-  query = f'site file={file}'
+def run_dasgoclient(query, inputDBS='global', json_output=False, timeout=None, verbose=0):
   if inputDBS != 'global':
     query += f' instance=prod/{inputDBS}'
-  _, output, _ = ps_call(['dasgoclient', '--json', '--query', query], catch_stdout=True, verbose=verbose)
-  return json.loads(output)
+  cmd = [ '/cvmfs/cms.cern.ch/common/dasgoclient', '--query', query ]
+  if json_output:
+    cmd.append('--json')
+  env = {
+    'PATH': '/usr/bin',
+    'X509_USER_PROXY': os.environ['X509_USER_PROXY'],
+    'HOME': os.environ.get('HOME', os.getcwd()),
+  }
+  split = None if json_output else '\n'
+  _, output, _ = ps_call(cmd, catch_stdout=True, split=split, timeout=timeout, verbose=verbose, env=env)
+  if json_output:
+    return json.loads(output)
+  return [ line.strip() for line in output if len(line.strip()) > 0 ]
+
+def das_file_site_info(file, inputDBS='global', verbose=0):
+  return run_dasgoclient(f'site file={file}', inputDBS=inputDBS, json_output=True, verbose=verbose)
 
 def das_file_pfns(file, disk_only=True, return_adler32=False, inputDBS='global', verbose=0):
   site_info = das_file_site_info(file, inputDBS=inputDBS, verbose=verbose)
