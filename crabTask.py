@@ -23,7 +23,7 @@ from .getFileRunLumi import getFileRunLumi
 class Task:
   _taskCfgProperties = [
     'cmsswPython', 'params', 'unitsPerJob', 'scriptExe', 'filesToTransfer',
-    'lumiMask', 'maxMemory', 'numCores', 'inputDBS', 'allowNonValid',
+    'lumiMask', 'maxMemory', 'numCores', 'inputDBS', 'allowNonValid', 'autoIgnoreCorrupt',
     'vomsGroup', 'vomsRole', 'blacklist', 'whitelist', 'whitelistFinalRecovery', 'dryrun',
     'maxRecoveryCount', 'targetOutputFileSize', 'ignoreFiles', 'ignoreLocality', 'crabType'
   ]
@@ -54,6 +54,7 @@ class Task:
     self.numCores = -1
     self.inputDBS = ''
     self.allowNonValid = False
+    self.autoIgnoreCorrupt = False
     self.vomsGroup = ''
     self.vomsRole = ''
     self.blacklist = []
@@ -292,8 +293,7 @@ class Task:
       fileRunLumiPath = os.path.join(self.workArea, 'file_run_lumi.json')
       if not os.path.exists(fileRunLumiPath):
         print(f'{self.name}: Gathering file->(run,lumi) correspondance ...')
-        self.fileRunLumi = getFileRunLumi(self.inputDataset, inputDBS=self.inputDBS,
-                                          dasOperationTimeout=Task.dasOperationTimeout)
+        self.fileRunLumi = getFileRunLumi(self.inputDataset, inputDBS=self.inputDBS, timeout=Task.dasOperationTimeout)
         with open(fileRunLumiPath, 'w') as f:
           json.dump(self.fileRunLumi, f, indent=2)
       else:
@@ -385,29 +385,44 @@ class Task:
       report['processingStart'] = self.startDate
       report['notProcessedFiles'] = notProcessedFiles
       haddInputs = {}
+      haddFileRunLumi = {}
       file_list_path = os.path.join(job_home, 'file_list.txt')
       with open(file_list_path, 'w') as f:
         for fileName, fileDesc in processedFiles.items():
           x = fileDesc['outputs'][outputName]
           haddInputs[x] = fileName
+          haddFileRunLumi[x] = self.getFileRunLumi()[fileName]
           f.write(x + '\n')
 
       hadd_report_path = os.path.join(job_home, 'merge_report.json')
       cmd = [ 'python3', '-u', haddnanoEx_path, '--output-dir', output['finalOutput'], '--output-name', outputName,
              '--target-size', str(self.targetOutputFileSize), '--file-list', file_list_path, '--remote-io',
              '--work-dir', job_home, '--merge-report', hadd_report_path]
+      if self.isInputFromDAS():
+        haddFileRunLumi_file = os.path.join(job_home, 'file_run_lumi_hadd.json')
+        with open(haddFileRunLumi_file, 'w') as f:
+          json.dump(haddFileRunLumi, f, indent=2)
+        cmd.extend([ '--file-run-lumi', haddFileRunLumi_file ])
       ps_call(cmd, verbose=1)
       with open(hadd_report_path, 'r') as f:
         hadd_report = json.load(f)
       report['outputs'] = {}
-      for haddOutput, inputList in hadd_report.items():
+      for haddOutput, haddOutputDesc in hadd_report.items():
+        inputList = haddOutputDesc['inputs']
         if self.isInputFromDAS():
-          report['outputs'][haddOutput] = {}
+          report['outputs'][haddOutput] = { 'adler32sum': haddOutputDesc['adler32sum'],
+                                            'n_selected': haddOutputDesc['n_selected'],
+                                            'n_not_selected': haddOutputDesc['n_not_selected'],
+                                            'size': haddOutputDesc['size'],
+                                            'n_selected_original': haddOutputDesc['n_selected_original'],
+                                            'n_not_selected_original': haddOutputDesc['n_not_selected_original'],
+                                            'size_original': haddOutputDesc['size_original'],
+                                            'inputs': {} }
           for haddInput in inputList:
             origInput = haddInputs[haddInput]
-            report['outputs'][haddOutput][origInput] = self.getFileRunLumi()[origInput]
+            report['outputs'][haddOutput]['inputs'][origInput] = self.getFileRunLumi()[origInput]
         else:
-          report['outputs'][haddOutput] = [ haddInputs[haddInput] for haddInput in inputList ]
+          report['outputs'][haddOutput]['inputs'] = [ haddInputs[haddInput] for haddInput in inputList ]
       report['processingEnd'] = timestamp_str()
 
       report_file =f'prodReport_{outputNameBase}.json'
@@ -513,6 +528,11 @@ class Task:
       if len(jobIds) == len(failedJobIds) and len(failedJobIds) > 0:
         self.taskStatus.status = Status.Failed
       self.saveStatus()
+      if self.autoIgnoreCorrupt and self.taskStatus.status == Status.Failed:
+        print(f'{self.name}: Some local jobs are failed. Checking for corrupt files (autoIgnoreCorrupt=True) ...')
+        self.checkFilesToProcess(lawTaskManager=lawTaskManager, resetStatus=True)
+        if self.taskStatus.status == Status.Failed:
+          self.ignoreMissingFiles(lawTaskManager=lawTaskManager)
       neen_local_run = self.taskStatus.status not in [ Status.CrabFinished, Status.Failed ]
     else:
       try:

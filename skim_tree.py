@@ -113,9 +113,10 @@ def get_columns(df):
   all_columns = sorted(all_columns, key=lambda c: (column_types[c] not in simple_types, c))
   return all_columns, column_types
 
+processing_modules = {}
+
 def skim_tree(inputs, input_tree, output, output_tree, input_range, output_range, snapshot_options,
               column_filters, sel, invert_sel, processing_module, processing_function, verbose=0):
-
   def create_empty_file(msg):
     if verbose > 0:
       print(msg)
@@ -136,7 +137,9 @@ def skim_tree(inputs, input_tree, output, output_tree, input_range, output_range
     df = df.Range(*input_range)
 
   if processing_module:
-    module = load_module(processing_module)
+    if processing_module not in processing_modules:
+      processing_modules[processing_module] = load_module(processing_module)
+    module = processing_modules[processing_module]
     fn = getattr(module, processing_function)
     df = fn(df)
 
@@ -288,6 +291,8 @@ if __name__ == "__main__":
 
     input_tree = setup['input_tree']
     output_tree = setup.get('output_tree', input_tree)
+    input_trees = [ input_tree ]
+    output_trees = [ output_tree ]
     other_trees = setup.get('other_trees', [])
     hists = setup.get('hists', [])
     sel = setup.get('sel', None)
@@ -306,8 +311,13 @@ if __name__ == "__main__":
       raise RuntimeError("Setup name is specified, but config file is not.")
     if not args.input_tree:
       raise RuntimeError("Input tree is not specified.")
-    input_tree = args.input_tree
-    output_tree = args.output_tree if args.output_tree else args.input_tree
+    input_trees = args.input_tree.split(',')
+    if len(input_trees) > 1:
+      if args.output_tree:
+        raise RuntimeError("Output tree renaming is not supported when multiple input trees are provided.")
+      output_trees = input_trees
+    else:
+      output_trees = [ args.output_tree if args.output_tree else args.input_tree ]
     sel = args.sel
     invert_sel = args.invert_sel
     def get_list(arg):
@@ -336,7 +346,7 @@ if __name__ == "__main__":
   if args.n_threads > 1:
     ROOT.ROOT.EnableImplicitMT(args.n_threads)
 
-  inputs = select_inputs(all_inputs, [ input_tree ] + other_trees + hists, args.ignore_absent, args.skip_empty,
+  inputs = select_inputs(all_inputs, input_trees + other_trees + hists, args.ignore_absent, args.skip_empty,
                          args.verbose)
 
   opt = ROOT.RDF.RSnapshotOptions()
@@ -345,12 +355,16 @@ if __name__ == "__main__":
   if args.update_output:
       opt.fMode = 'UPDATE'
 
-  skim_tree(inputs=inputs[input_tree], input_tree=input_tree, output=args.output, output_tree=output_tree,
-            input_range=input_range, output_range=output_range, column_filters=column_filters,
-            sel=sel, invert_sel=invert_sel, processing_module=processing_module,
-            processing_function=processing_function, snapshot_options=opt, verbose=args.verbose)
+  for input_idx in range(len(input_trees)):
+    input_tree = input_trees[input_idx]
+    output_tree = output_trees[input_idx]
+    print(f'Processing {input_tree} -> {output_tree}...')
+    skim_tree(inputs=inputs[input_tree], input_tree=input_tree, output=args.output, output_tree=output_tree,
+              input_range=input_range, output_range=output_range, column_filters=column_filters,
+              sel=sel, invert_sel=invert_sel, processing_module=processing_module,
+              processing_function=processing_function, snapshot_options=opt, verbose=args.verbose)
+    opt.fMode = 'UPDATE'
 
-  opt.fMode = 'UPDATE'
   for tree_name in other_trees:
     copy_tree(inputs=inputs[tree_name], tree_name=tree_name, output=args.output, snapshot_options=opt,
               verbose=args.verbose)
