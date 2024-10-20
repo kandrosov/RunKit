@@ -165,17 +165,6 @@ def find_dataset_report(cfg, era, task_name, voms_token):
       return task_report_path, False, output
   return None, False, None
 
-def get_event_stats(root_files):
-  n_evts = {}
-  for root_file in root_files:
-    file = ROOT.TFile.Open(root_file)
-    for tree_name, stat_name in [ ('Events', 'n_selected'), ('EventsNotSelected', 'n_not_selected') ]:
-      tree = file.Get(tree_name)
-      if not (tree == None):
-        df = ROOT.RDataFrame(tree)
-        n_evts[stat_name] = n_evts.get(stat_name, 0) + df.Count().GetValue()
-  return n_evts
-
 def check_consistency(cfg, datasets_info):
   all_ok = True
   datasets_by_name = {}
@@ -281,13 +270,14 @@ def deploy_prod_results(cfg_file, era, dry_run=False, check_only=False, output_m
         print_ts(f'{input_path} -> {output_path}')
         gfal_copy_safe(input_path, output_path, voms_token=voms_token, verbose=0)
 
-    total_size = 0
+    stats = { key: 0 for key in [ 'size', 'n_selected', 'n_not_selected', 'n_selected_original',
+                                  'n_not_selected_original', 'size_original' ] }
     output_files = []
-    for output_file in report['outputs'].keys():
+    for output_file, output_desc in report['outputs'].items():
       output_path = os.path.join(cfg['storage'], era, task_name, output_file)
       output_files.append(output_path)
-      total_size += gfal_ls(output_path, voms_token=voms_token, verbose=0)[0].size
-    n_evts = get_event_stats(output_files)
+      for stat_key in stats.keys():
+        stats[stat_key] += output_desc[stat_key]
 
     size_report_tmp = os.path.join(tmp_dir, f'{task_name}_size.html')
     doc_report_tmp = os.path.join(tmp_dir, f'{task_name}_doc.html')
@@ -302,14 +292,8 @@ def deploy_prod_results(cfg_file, era, dry_run=False, check_only=False, output_m
     if os.path.exists(root_tmp):
       os.remove(root_tmp)
 
-    dataset = {
-      'name': task_name,
-      'dataset': report['inputDataset'],
-      'size': total_size,
-      'n_files': len(output_files),
-      'n_selected': n_evts.get('n_selected', 0),
-      'n_not_selected': n_evts.get('n_not_selected', 0),
-    }
+    dataset = { 'name': task_name, 'dataset': report['inputDataset'], 'n_files': len(output_files) }
+    dataset.update(stats)
 
     print(json.dumps(dataset, indent=2))
     datasets_info['datasets'].append(dataset)
