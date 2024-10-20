@@ -4,6 +4,25 @@ import re
 import sys
 import yaml
 
+from yaml import Loader
+from yaml.constructor import ConstructorError
+
+def no_duplicates_constructor(loader, node, deep=False):
+    """Check for duplicate keys."""
+
+    mapping = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        value = loader.construct_object(value_node, deep=deep)
+        if key in mapping:
+            raise ConstructorError("while constructing a mapping", node.start_mark,
+                                   "found duplicate key (%s)" % key, key_node.start_mark)
+        mapping[key] = value
+
+    return loader.construct_mapping(node, deep)
+
+yaml.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, no_duplicates_constructor)
+
 if __name__ == "__main__":
   file_dir = os.path.dirname(os.path.abspath(__file__))
   sys.path.append(os.path.dirname(file_dir))
@@ -28,9 +47,10 @@ def check_consistency_era(task_cfg_files, dataset_name_mask_mc=None, dataset_nam
       continue
     try:
       with open(task_cfg_file) as f:
-        cfg = yaml.safe_load(f)
-    except:
+        cfg = yaml.load(f, Loader=Loader)
+    except Exception as e:
       print(f'ERROR: "{task_cfg_file}" unable to parse yaml.')
+      print(e)
       all_ok = False
       continue
     if type(cfg) != dict:
@@ -120,6 +140,9 @@ class ExceptionMatcher:
 
 def check_task_consistency(task_name, eras, all_eras, exception_matcher, era_results, name_matching,
                            dataset_name_masks, show_only_missing_with_candidates):
+  if not re.match('^[A-Za-z0-9_]+$', task_name):
+    print(f'{task_name} contains invalid characters')
+    return False
   n_eras = len(all_eras)
   is_data = era_results[eras[0]].tasks_by_name[task_name][0]['isData']
   exception_match_ok, known_exceptions, known_exception_to_pattern = exception_matcher.get_known_exceptions(task_name)
