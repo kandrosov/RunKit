@@ -161,6 +161,20 @@ class InputBlock:
           processed_indices.update(overlap_idx)
           had_merge = True
       blocks = new_blocks
+    print(f'Created {len(blocks)} input blocks:')
+    processed_inputs = set()
+    has_overlaps = False
+    for block_idx, block in enumerate(blocks):
+      print(f' block #{block_idx}: {len(block.files)} files, {toMiB(block.size):.1f} MiB total')
+      for file in block.files:
+        print(f'    {file.name} ({toMiB(file.size):.1f} MiB)')
+        if file in processed_inputs:
+          has_overlaps = True
+        processed_inputs.add(file)
+    if has_overlaps:
+      raise RuntimeError('Error while creating input blocks. Some input files are shared between blocks.')
+    if len(processed_inputs) != len(input_files):
+      raise RuntimeError('Error while creating input blocks. Some input files are missing.')
     return blocks
 
   @staticmethod
@@ -317,11 +331,10 @@ def createOutputPlan(input_files, target_size, output_name_base, file_run_lumi):
       if block not in processed_blocks and output_file.try_add(block, target_size):
         processed_blocks.add(block)
     output_files.append(output_file)
-  for idx, file in enumerate(output_files):
-    file.name = output_name_base + f'_{idx}.root'
   processed_files = set()
-  for output_file in output_files:
-    for input_file in file.input_files:
+  for output_idx, output_file in enumerate(output_files):
+    output_file.name = output_name_base + f'_{output_idx}.root'
+    for input_file in output_file.input_files:
       if input_file in processed_files:
         raise RuntimeError(f'File "{input_file.name}" is duplicated.')
       processed_files.add(input_file)
@@ -343,6 +356,8 @@ def haddnanoEx(input_dirs, file_list, output_dir, output_name, work_dir, target_
   input_files = getInputFiles(input_dirs, file_list, io_provider)
   if len(input_files) == 0:
     raise RuntimeError("No input files were found.")
+  if len(set(input_files)) != len(input_files):
+    raise RuntimeError("Some input files are duplicated.")
   output_name_base, output_name_ext = os.path.splitext(output_name)
   if output_name_ext != '.root':
     raise RuntimeError(f'Unsupported output file format "{output_name_ext}"')
