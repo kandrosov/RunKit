@@ -19,6 +19,7 @@ class HTCondorWorkflow(law.htcondor.HTCondorWorkflow):
     max_runtime = law.DurationParameter(default=24.0, unit="h", significant=False,
                                         description="maximum runtime, default unit is hours")
     n_cpus = luigi.IntParameter(default=1, description="number of cpus")
+    poll_interval = copy_param(law.htcondor.HTCondorWorkflow.poll_interval, 2)
     requirements = luigi.Parameter(default='')
     bootstrap_path = luigi.Parameter()
     log_path = luigi.Parameter(default='')
