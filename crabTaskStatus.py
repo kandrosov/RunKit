@@ -25,6 +25,7 @@ class StatusOnServer(Enum):
   SUBMITFAILED = 6
   RESUBMITFAILED = 7
   KILLFAILED = 8
+  SUBMITREFUSED = 9
 
 class StatusOnScheduler(Enum):
   WAITING_FOR_BOOTSTRAP = 0
@@ -126,7 +127,7 @@ class LogEntryParser:
       if task_status.status_on_scheduler == StatusOnScheduler.COMPLETED:
         task_status.status = Status.CrabFinished
       if task_status.status_on_server in [ StatusOnServer.SUBMITFAILED, StatusOnServer.RESUBMITFAILED,
-                                           StatusOnServer.KILLFAILED ]:
+                                           StatusOnServer.KILLFAILED, StatusOnServer.SUBMITREFUSED ]:
         task_status.status = Status.WaitingForRecovery
     except RuntimeError as e:
       task_status.status = Status.Unknown
@@ -263,8 +264,13 @@ class LogEntryParser:
     }
 
     def to_seconds(hh_mm_ss):
+      if hh_mm_ss.startswith('-'):
+        hh_mm_ss = hh_mm_ss[1:]
+        sign = -1
+      else:
+        sign = 1
       hh, mm, ss = [ int(s) for s in hh_mm_ss.split(':') ]
-      return ((hh * 60) + mm) + ss
+      return sign * (((hh * 60) + mm) + ss)
 
     runtime_str = log_lines[n + 2].strip()
     time_re = '-*([0-9]+:[0-9]+:[0-9]+)'
@@ -291,7 +297,7 @@ class LogEntryParser:
       shift += 1
 
     waste_str = log_lines[n + shift].strip()
-    match = re.match(r'^\* Waste: ([0-9]+:[0-9]+:[0-9]+) \(([0-9]+)% of total\)$', waste_str)
+    match = re.match(r'^\* Waste: (-*[0-9]+:[0-9]+:[0-9]+) \((-*[0-9]+)% of total\)$', waste_str)
     if match is not None:
       task_status.run_stat["CPU"] = {
         'time': to_seconds(match.group(1)),
