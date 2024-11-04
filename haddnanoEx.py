@@ -1,3 +1,4 @@
+import functools
 import json
 import os
 import re
@@ -203,12 +204,14 @@ class OutputFile:
     self.expected_size = 0.
     self.input_files = []
     self.input_files_local = None
+    self.has_overlaps = False
 
-  def try_add(self, block, max_size):
-    if len(self.input_files) > 0 and self.expected_size + block.size > max_size:
+  def try_add(self, file, max_size, has_overlaps):
+    if len(self.input_files) > 0 and self.expected_size + file.size > max_size:
       return False
-    self.expected_size += block.size
-    self.input_files.extend(block.files)
+    self.expected_size += file.size
+    self.input_files.append(file)
+    self.has_overlaps = self.has_overlaps or has_overlaps
     return True
 
   def try_merge(self, input_names):
@@ -235,16 +238,23 @@ class OutputFile:
       print(f"Merge failed. {error}\nWaiting {retry_interval} seconds before the next attempt...")
       time.sleep(retry_interval)
 
-  def filter_duplicates(self):
-    skim_tree_path = os.path.join(os.path.dirname(__file__), 'skim_tree.py')
-    filter_duplicates_path = os.path.join(os.path.dirname(__file__), 'filter_duplicates.py')
+  def filter_duplicates(self, eventids_file, eventids_tmp_file):
     self.out_filtered_path = self.out_path.replace('.root', '_filtered.root')
-    cmd = [ 'python3', '-u', skim_tree_path, '--input', self.out_path, '--output', self.out_filtered_path,
-            '--input-tree', 'Events,EventsNotSelected', '--ignore-absent',
-            '--processing-module', f'{filter_duplicates_path}:filter',
-            '--other-trees', 'LuminosityBlocks,Runs', '--verbose', '1' ]
-    ps_call(cmd, verbose=1)
-    self.size = os.path.getsize(self.out_filtered_path)
+    if self.has_overlaps:
+      skim_tree_path = os.path.join(os.path.dirname(__file__), 'skim_tree.py')
+      filter_duplicates_path = os.path.join(os.path.dirname(__file__), 'filter_duplicates.py')
+
+      cmd = [ 'python3', '-u', skim_tree_path, '--input', self.out_path, '--output', self.out_filtered_path,
+              '--input-tree', 'Events,EventsNotSelected', '--ignore-absent',
+              '--processing-module', f'{filter_duplicates_path}:filter',
+              '--processing-arguments', eventids_file, eventids_tmp_file,
+              '--other-trees', 'LuminosityBlocks,Runs', '--verbose', '1' ]
+      ps_call(cmd, verbose=1)
+      if not os.path.exists(eventids_tmp_file):
+        raise RuntimeError('Eventids file was not created')
+      shutil.move(eventids_tmp_file, eventids_file)
+    else:
+      shutil.copy(self.out_path, self.out_filtered_path)
 
 def loadEventStats(file_name):
   stats = {}
@@ -260,19 +270,22 @@ def loadEventStats(file_name):
   root_file.Close()
   return stats
 
-
 def mergeFiles(output_files, output_dir, output_name_base, work_dir, io_provider, max_n_retries, retry_interval):
   merge_dir = os.path.join(work_dir, 'merged')
   os.makedirs(merge_dir, exist_ok=True)
   input_dir = os.path.join(work_dir, 'input')
   os.makedirs(merge_dir, exist_ok=True)
+  eventids_dir = os.path.join(work_dir, 'eventids')
+  os.makedirs(eventids_dir, exist_ok=True)
+  eventids_file = os.path.join(eventids_dir, 'eventids.root')
+  eventids_tmp_file = os.path.join(eventids_dir, 'eventids_tmp.root')
   output_tmp = os.path.join(output_dir, output_name_base + '.tmp')
 
   for file in output_files:
     print(f'Merging {len(file.input_files)} input files into {file.name}...')
     file.input_files_local = io_provider.copy_local([ f.name for f in file.input_files ], input_dir)
     file.merge(merge_dir, max_n_retries, retry_interval)
-    file.filter_duplicates()
+    file.filter_duplicates(eventids_file, eventids_tmp_file)
     output_stats = loadEventStats(file.out_path)
     output_filtered_stats = loadEventStats(file.out_filtered_path)
     file.n_selected = output_filtered_stats['n_selected']
@@ -323,13 +336,19 @@ def getInputFiles(input_dirs, file_list, io_provider):
 def createOutputPlan(input_files, target_size, output_name_base, file_run_lumi):
   input_blocks = InputBlock.create(input_files, file_run_lumi)
   input_blocks = sorted(input_blocks, key=lambda b: -b.size)
-  processed_blocks = set()
+  ordered_input_files = []
+  for block in input_blocks:
+    block_files = sorted(block.files, key=lambda f: -f.size)
+    has_overlaps = len(block_files) > 1
+    for file in block_files:
+      ordered_input_files.append((file, has_overlaps))
+  processed_block_files = set()
   output_files = []
-  while len(processed_blocks) < len(input_blocks):
+  while len(processed_block_files) < len(input_files):
     output_file = OutputFile()
-    for block in input_blocks:
-      if block not in processed_blocks and output_file.try_add(block, target_size):
-        processed_blocks.add(block)
+    for input_file, has_overlaps in ordered_input_files:
+      if input_file not in processed_block_files and output_file.try_add(input_file, target_size, has_overlaps):
+        processed_block_files.add(input_file)
     output_files.append(output_file)
   processed_files = set()
   for output_idx, output_file in enumerate(output_files):
