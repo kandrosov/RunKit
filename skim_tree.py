@@ -116,7 +116,7 @@ def get_columns(df):
 processing_modules = {}
 
 def skim_tree(inputs, input_tree, output, output_tree, input_range, output_range, snapshot_options,
-              column_filters, sel, invert_sel, processing_module, processing_function, verbose=0):
+              column_filters, sel, invert_sel, processing_module, processing_function, processing_arguments, verbose=0):
   def create_empty_file(msg):
     if verbose > 0:
       print(msg)
@@ -137,11 +137,14 @@ def skim_tree(inputs, input_tree, output, output_tree, input_range, output_range
     df = df.Range(*input_range)
 
   if processing_module:
+    if verbose > 0:
+      arg_str = ', '.join([ 'df' ] + processing_arguments)
+      print(f"Running {processing_module}:{processing_function}({arg_str}) ...")
     if processing_module not in processing_modules:
       processing_modules[processing_module] = load_module(processing_module)
     module = processing_modules[processing_module]
     fn = getattr(module, processing_function)
-    df = fn(df)
+    df = fn(df, *processing_arguments)
 
   all_columns, column_types = get_columns(df)
   selected_columns = select_items(all_columns, column_filters, verbose=verbose)
@@ -169,6 +172,12 @@ def skim_tree(inputs, input_tree, output, output_tree, input_range, output_range
   if verbose > 0:
     print("Creating a snapshot...")
   df.Snapshot(output_tree, output, branches, snapshot_options)
+  if processing_module:
+    module = processing_modules[processing_module]
+    if hasattr(module, 'OnTreeSkimFinish'):
+      if verbose > 0:
+        print(f"Running {processing_module}:OnTreeSkimFinish({input_tree}, {output_tree}) ...")
+      module.OnTreeSkimFinish(input_tree, output_tree)
 
 def copy_tree(inputs, tree_name, output, snapshot_options, verbose=0):
   if verbose > 0:
@@ -232,6 +241,8 @@ if __name__ == "__main__":
                       help="prefix to be added to input each input file")
   parser.add_argument('--processing-module', required=False, type=str, default=None,
                       help="Python module used to process DataFrame. Should be in form file:method")
+  parser.add_argument('--processing-arguments', nargs='*', required=False, type=str, default=[],
+                      help="Argument to pass to processing module.")
   parser.add_argument('--config', required=False, type=str, default=None,
                       help="Configuration with the skim setup.")
   parser.add_argument('--setup', required=False, type=str, default=None,
@@ -268,6 +279,7 @@ if __name__ == "__main__":
 
   processing_module = None
   processing_function = None
+  processing_arguments = None
 
   if args.config:
     for arg_name in [ 'input_tree', 'output_tree', 'other_trees', 'hists', 'sel', 'invert_sel', 'column_filters',
@@ -306,6 +318,7 @@ if __name__ == "__main__":
     if 'processing_module' in setup:
       processing_module = setup['processing_module']['file']
       processing_function = setup['processing_module']['function']
+      processing_arguments = setup['processing_module'].get('arguments', [])
   else:
     if args.setup:
       raise RuntimeError("Setup name is specified, but config file is not.")
@@ -334,6 +347,7 @@ if __name__ == "__main__":
     column_filters = get_list('column_filters')
     if args.processing_module:
       processing_module, processing_function = args.processing_module.split(':')
+      processing_arguments = args.processing_arguments
 
   input_range = [ int(x) for x in args.input_range.split(':') ] if args.input_range else None
   output_range = [ int(x) for x in args.output_range.split(':') ] if args.output_range else None
@@ -344,6 +358,8 @@ if __name__ == "__main__":
     else:
       args.n_threads = 4
   if args.n_threads > 1:
+    if args.verbose > 0:
+      print(f"Using {args.n_threads} threads.")
     ROOT.ROOT.EnableImplicitMT(args.n_threads)
 
   inputs = select_inputs(all_inputs, input_trees + other_trees + hists, args.ignore_absent, args.skip_empty,
@@ -362,7 +378,8 @@ if __name__ == "__main__":
     skim_tree(inputs=inputs[input_tree], input_tree=input_tree, output=args.output, output_tree=output_tree,
               input_range=input_range, output_range=output_range, column_filters=column_filters,
               sel=sel, invert_sel=invert_sel, processing_module=processing_module,
-              processing_function=processing_function, snapshot_options=opt, verbose=args.verbose)
+              processing_function=processing_function, processing_arguments=processing_arguments, snapshot_options=opt,
+              verbose=args.verbose)
     opt.fMode = 'UPDATE'
 
   for tree_name in other_trees:
@@ -372,6 +389,13 @@ if __name__ == "__main__":
   if len(hists) > 0:
     copy_histograms(all_inputs=all_inputs, inputs=inputs, hists=hists, output=args.output, snapshot_options=opt,
                     verbose=args.verbose)
+
+  if processing_module:
+    module = processing_modules[processing_module]
+    if hasattr(module, 'OnSkimFinish'):
+      if args.verbose > 0:
+        print(f"Running {processing_module}:OnSkimFinish() ...")
+      module.OnSkimFinish()
 
   if args.verbose > 0:
     print("Skim successfully finished.")
