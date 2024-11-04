@@ -540,7 +540,7 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
 
       lawTaskManager.update_grid_jobs(law_jobs_cfg)
       n_cpus = local_proc_params.get('nCPU', 1)
-      max_runime = local_proc_params.get('maxRuntime', 24.0)
+      max_runime = local_proc_params.get('maxRuntime', 48.0)
       max_parallel_jobs = local_proc_params.get('maxParallelJobs', 1000)
       stop_date = last_update + datetime.timedelta(minutes=update_interval)
       stop_date_str = stop_date.strftime('%Y-%m-%dT%H%M%S')
