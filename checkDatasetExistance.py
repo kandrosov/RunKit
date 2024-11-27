@@ -1,8 +1,17 @@
 from enum import Enum
 import json
 import os
+import sys
 import yaml
-from run_tools import ps_call
+
+if __name__ == "__main__":
+  file_dir = os.path.dirname(os.path.abspath(__file__))
+  sys.path.append(os.path.dirname(file_dir))
+  __package__ = 'RunKit'
+
+
+from .run_tools import ps_call
+from .grid_tools import run_dasgoclient
 
 class Status(Enum):
   OK = 0
@@ -28,17 +37,15 @@ class DasInerface:
     self.cache[dataset] = status.name
     if self.cache_file is not None:
       with open(self.cache_file, 'w') as f:
-        json.dump(self.cache, f)
+        json.dump(self.cache, f, indent=2)
     return status
 
   def query_status(self, dataset):
     try:
       query = f'dataset dataset={dataset}'
-      if dataset.endswith("USER"): # Embedded samples
-        query += ' instance=prod/phys03'
+      inputDBS= 'prod/phys03' if dataset.endswith("USER") else 'global'
 
-      _, output, _ = ps_call(['dasgoclient', '--json', '--query', query], catch_stdout=True)
-      entries = json.loads(output)
+      entries = run_dasgoclient(query, inputDBS=inputDBS, json_output=True)
       ds_infos = []
       for entry in entries:
         if "dbs3:dataset_info" in entry['das']['services']:
