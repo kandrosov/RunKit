@@ -30,6 +30,8 @@ options.register('customiseCmds', '', VarParsing.multiplicity.singleton, VarPars
                  "Production customization commands (if any)")
 options.register('writePSet', False, VarParsing.multiplicity.singleton, VarParsing.varType.bool,
                  "Dump configuration into PSet.py.")
+options.register('processEachRunSeparately', False, VarParsing.multiplicity.singleton, VarParsing.varType.bool,
+                 "Run a separate cmsRun instance for each run.")
 options.register('copyInputsToLocal', True, VarParsing.multiplicity.singleton, VarParsing.varType.bool,
                  "Copy inputs (one at the time) to a job working directory before processing them.")
 options.register('inputDBS', 'global', VarParsing.multiplicity.singleton, VarParsing.varType.string,
@@ -130,6 +132,7 @@ process.exParams = cms.untracked.PSet(
   copyInputsToLocal = cms.untracked.bool(options.copyInputsToLocal),
   inputDBS = cms.untracked.string(options.inputDBS),
   inputPFNSprefix = cms.untracked.string(options.inputPFNSprefix),
+  processEachRunSeparately = cms.untracked.bool(options.processEachRunSeparately),
 )
 
 if options.writePSet:

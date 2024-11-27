@@ -665,7 +665,7 @@ class Task:
       for file in self.getFilesToTransfer(appendDatasetFiles=False):
         shutil.copy(os.path.join(ana_path, file), job_home)
       cmd = [ 'python3', os.path.join(ana_path, self.cmsswPython), f'datasetFiles={self.getDatasetFilesPath()}',
-              'writePSet=True', 'mustProcessAllInputs=True' ]
+              'writePSet=True', 'mustProcessAllInputs=True', 'processEachRunSeparately=True' ]
       for param in self.getParams(appendDatasetFiles=False):
         cmd.append(f'"{param}"')
       file_list = [ file for file in self.getGridJobs()[job_id] if file not in self.ignoreFiles ]
@@ -813,7 +813,8 @@ class Task:
         os.remove(self.gridJobsFile())
       if os.path.exists(self.getGridJobDoneFlagDir()):
         shutil.rmtree(self.getGridJobDoneFlagDir())
-      if expect_at_least_one_job and len(self.getGridJobs(lawTaskManager=lawTaskManager)) == 0:
+      n_grid_jobs = len(self.getGridJobs(lawTaskManager=lawTaskManager))
+      if expect_at_least_one_job and n_grid_jobs == 0:
         raise RuntimeError(f'{self.name}: unable to reset grid jobs')
 
   def fileSourcesFile(self):
