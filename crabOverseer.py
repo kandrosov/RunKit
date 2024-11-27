@@ -423,7 +423,10 @@ def load_tasks(work_area, task_list_path, new_task_list_files, main_cfg, update_
     with open(task_list_path, 'r') as f:
       task_names = json.load(f)
       for task_name in task_names:
-        tasks[task_name] = Task.Load(mainWorkArea=work_area, taskName=task_name)
+        try:
+          tasks[task_name] = Task.Load(mainWorkArea=work_area, taskName=task_name)
+        except Exception as e:
+          print_ts(f"{task_name}: invalid task. {e}")
   if len(new_task_list_files) > 0:
     task_list_changed = False
     for task_list_file in new_task_list_files:
@@ -496,8 +499,18 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
 
   if action is not None:
     print_ts(f"Applying action: {action}")
-    action_obj = ActionFactory.Make(action)
-    action_obj.apply(all_tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken)
+    if action == 'help':
+      answer = 'y'
+    else:
+      print_ts(f"Selected tasks: {', '.join(selected_tasks.keys())}")
+      print_ts("Proceed? (y/n)", end=' ')
+      sys.stdout.flush()
+      answer = sys.stdin.readline().strip().lower()
+    if answer in [ "y", "yes" ]:
+      action_obj = ActionFactory.Make(action)
+      action_obj.apply(all_tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken)
+    else:
+      print_ts("Action is cancelled.")
     return
 
   tasks = selected_tasks
@@ -531,11 +544,11 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
 
     if len(to_remove_output) > 0 or len(to_run_locally) > 0 or len(to_post_process) > 0:
       if len(to_remove_output) > 0:
-        print_ts("To remove output: " + ', '.join([ task.name for task in to_remove_output ]))
+        print_ts(f"To remove output ({len(to_remove_output)} tasks): " + ', '.join([ task.name for task in to_remove_output ]))
       if len(to_run_locally) > 0:
-        print_ts("To run on local grid: " + ', '.join([ task.name for task in to_run_locally ]))
+        print_ts(f"To run on local grid ({len(to_run_locally)} tasks): " + ', '.join([ task.name for task in to_run_locally ]))
       if len(to_post_process) > 0:
-        print_ts("Post-processing: " + ', '.join([ task.name for task in to_post_process ]))
+        print_ts(f"Post-processing ({len(to_post_process)} tasks): " + ', '.join([ task.name for task in to_post_process ]))
       print_ts(f"Total number of jobs to run on a local grid: {len(lawTaskManager.cfg)}")
 
       lawTaskManager.update_grid_jobs(law_jobs_cfg)
