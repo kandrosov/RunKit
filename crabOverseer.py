@@ -163,13 +163,14 @@ def sanity_checks(task):
         delta_t = (now - t).total_seconds() / (60 * 60)
         job_runs.append([job_id, delta_t])
       job_runs = sorted(job_runs, key=lambda x: x[1])
-      max_run = job_runs[0][1]
-      if max_run > abnormal_inactivity_thr:
-        text = f'{task.name}: all running jobs are running for at least {max_run:.1f} hours.' \
-              + ' It is very likely that these jobs are stacked. Task will be killed following by recovery attempts.'
-        print(text)
-        task.kill()
-        return False
+      if len(job_runs) > 0:
+        max_run = job_runs[0][1]
+        if max_run > abnormal_inactivity_thr:
+          text = f'{task.name}: all running jobs are running for at least {max_run:.1f} hours.' \
+                + ' It is very likely that these jobs are stacked. Task will be killed following by recovery attempts.'
+          print(text)
+          task.kill()
+          return False
 
   return True
 

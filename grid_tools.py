@@ -303,7 +303,10 @@ def get_distances(local_site, sites):
     if local_site is None or site == local_site:
       distances[site] = 0
     else:
-      dist = client.get_distance(site, local_site)
+      try:
+        dist = client.get_distance(site, local_site)
+      except:
+        dist = []
       if len(dist) > 0:
         distances[site] = dist[0]['distance']
       else:
