@@ -17,6 +17,7 @@ class Status(Enum):
   Finished = 10
 
 class StatusOnServer(Enum):
+  WAITING = 0
   QUEUED = 1
   TAPERECALL = 2
   NEW = 3
@@ -112,7 +113,7 @@ class LogEntryParser:
             break
         if not method_found:
           raise RuntimeError(f'Unknown log line {n} = "{log_lines[n]}".')
-      if task_status.status_on_server in [ StatusOnServer.QUEUED, StatusOnServer.NEW ]:
+      if task_status.status_on_server in [ StatusOnServer.QUEUED, StatusOnServer.NEW, StatusOnServer.WAITING ]:
         task_status.status = Status.Submitted
       if task_status.status_on_server == StatusOnServer.TAPERECALL:
         task_status.status = Status.TapeRecall
@@ -149,6 +150,8 @@ class LogEntryParser:
       task_status.status_on_server = StatusOnServer.TAPERECALL
     elif value == "NEW on command SUBMIT":
       task_status.status_on_server = StatusOnServer.NEW
+    elif value == "WAITING on command SUBMIT":
+      task_status.status_on_server = StatusOnServer.WAITING
     else:
       if value not in StatusOnServer.__members__:
         raise RuntimeError(f'Unknown status on the CRAB server = "{value}"')
