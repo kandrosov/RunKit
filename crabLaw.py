@@ -100,6 +100,22 @@ class LawTaskManager:
           selected_branches.append(entry['branch_id'])
     return selected_branches
 
+  def clean_branches(self, task_work_areas, dry_run=False):
+    task_work_areas = [ os.path.abspath(task_work_area) for task_work_area in task_work_areas ]
+    new_cfg = []
+    to_remove = []
+    has_updates = False
+    for entry in self.cfg:
+      if entry['task_work_area'] in task_work_areas:
+        new_cfg.append(entry)
+      else:
+        has_updates = True
+        to_remove.append(entry)
+    if not dry_run and has_updates:
+      self.cfg = new_cfg
+      self.has_updates = True
+    return to_remove
+
   def _save_safe(self, file, json_content):
     tmp_path = file + '.tmp'
     with open(tmp_path, 'w') as f:
@@ -117,11 +133,21 @@ class LawTaskManager:
     with open(grid_jobs_file, 'r') as f:
       grid_jobs = json.load(f)
     has_updates = False
+    valid_jobs = set()
     for entry in self.cfg:
       branch_id = entry['branch_id']
       job_id = str(branch_id + 1)
+      valid_jobs.add(job_id)
       if job_id not in grid_jobs["jobs"] and job_id not in grid_jobs["unsubmitted_jobs"]:
         grid_jobs["unsubmitted_jobs"][job_id] = [  branch_id ]
+        has_updates = True
+    for col in [ "jobs", "unsubmitted_jobs" ]:
+      jobs_to_remove = []
+      for job_id in grid_jobs[col]:
+        if job_id not in valid_jobs:
+          jobs_to_remove.append(job_id)
+      for job_id in jobs_to_remove:
+        grid_jobs[col].pop(job_id)
         has_updates = True
     if has_updates:
       self._save_safe(grid_jobs_file, grid_jobs)
@@ -217,6 +243,9 @@ class ProdTask(HTCondorWorkflow, law.LocalWorkflow):
       cond.notify_all()
       cond.release()
       thread.join()
+
+  def htcondor_poll_callback(self, poll_data):
+    return self.poll_callback(poll_data)
 
   def poll_callback(self, poll_data):
     update_kinit(verbose=0)

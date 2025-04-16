@@ -369,6 +369,35 @@ class ActionRemove(Action):
       del tasks[task.name]
     with open(task_list_path, 'w') as f:
       json.dump([task_name for task_name in tasks], f, indent=2)
+    if len(selected_tasks) > 0:
+      print('Removing law jobs for which tasks no longer exist...')
+      task_work_areas = []
+      for task in tasks.values():
+        task_work_areas.append(task.workArea)
+      lawTaskManager.clean_branches(task_work_areas)
+      lawTaskManager.save()
+
+class ActionCleanLawJobs(Action):
+  def apply(self, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
+    task_work_areas = []
+    for task in tasks.values():
+      task_work_areas.append(task.workArea)
+    branches_to_remove = lawTaskManager.clean_branches(task_work_areas, dry_run=True)
+    if len(branches_to_remove) > 0:
+      print(f'Following branches will be removed:')
+      for branch in branches_to_remove:
+        print(f'  branch_id={branch["branch_id"]} task_work_area={branch["task_work_area"]}'
+              f' task_grid_job_id={branch["task_grid_job_id"]}')
+      print_ts("Proceed? (y/n)", end=' ')
+      sys.stdout.flush()
+      answer = sys.stdin.readline().strip().lower()
+      if answer in [ "y", "yes" ]:
+        branches_to_remove = lawTaskManager.clean_branches(task_work_areas)
+        lawTaskManager.save()
+        print(f'{len(branches_to_remove)} branches are removed.')
+    else:
+      print("No branches to remove.")
+
 
 class ActionFactory:
   known_actions = OrderedDict([
@@ -387,6 +416,7 @@ class ActionFactory:
     ('remove_crab_output', (ActionRemoveCrabOutput, 'remove crab output for selected tasks')),
     ('kill', (ActionKill, 'send kill request for selected tasks')),
     ('remove', (ActionRemove, 'remove selected tasks')),
+    ('clean_law_jobs', (ActionCleanLawJobs, 'clean law jobs for which tasks no longer exist')),
   ])
 
   @staticmethod
@@ -580,7 +610,7 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
           raise RuntimeError("No branches are selected for local processing.")
         branches_str = ','.join([ str(branch) for branch in selected_branches ])
         cmd.extend(['--branches', branches_str])
-      ps_call(cmd)
+      ps_call(cmd, verbose=1)
       print_ts("Local grid processing iteration finished.")
     has_unfinished = False
     for task_name, task in tasks.items():
