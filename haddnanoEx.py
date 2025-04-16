@@ -86,7 +86,9 @@ class RemoteIO:
     self.gfal_copy_safe(src, dst, voms_token=self.voms_token)
 
   def move(self, src, dst):
-    self.gfal_rename(src, dst, voms_token=self.voms_token)
+    # self.gfal_rename(src, dst, voms_token=self.voms_token)
+    self.gfal_copy_safe(src, dst, voms_token=self.voms_token)
+    self.gfal_rm(src, recursive=False, voms_token=self.voms_token)
 
   def copy_local(self, files, out_dir):
     local_files = []
