@@ -106,8 +106,9 @@ def create_tmp_local_file():
 def gfal_env(voms_token):
   return {
     'X509_USER_PROXY': voms_token,
-    'PATH': '/cvmfs/grid.cern.ch/alma9-ui-current/usr/bin:/usr/bin',
-    'PYTHONPATH': '/cvmfs/grid.cern.ch/alma9-ui-current/usr/lib/python3.9/site-packages'
+    'PATH': '/cvmfs/grid.cern.ch/alma9-ui-current/usr/bin',
+    'PYTHONPATH': '/cvmfs/grid.cern.ch/alma9-ui-current/usr/lib/python3.9/site-packages',
+    'GFAL_PYTHONBIN': '/usr/bin/python3'
   }
 
 def gfal_copy_safe(input_file, output_file, voms_token=None, number_of_streams=2, timeout=7200,
