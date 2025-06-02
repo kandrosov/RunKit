@@ -104,6 +104,7 @@ class GFALFileInterface(RemoteFileInterface):
       entries = gfal_ls_safe(path_uri, voms_token=self.voms_token, catch_stderr=True, verbose=0)
       if entries is None:
         if not silent:
+          gfal_ls_safe(path_uri, voms_token=self.voms_token, catch_stderr=False, verbose=1)
           raise GfalError(f'GFALFileInterface: failed to list directory {path}')
         entries = []
       self.ls_cache.add(path, entries)
