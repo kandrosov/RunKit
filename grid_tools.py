@@ -103,6 +103,13 @@ def create_tmp_local_file():
       f.write('0')
   return COPY_TMP_LOCAL_FILE
 
+def gfal_env(voms_token):
+  return {
+    'X509_USER_PROXY': voms_token,
+    'PATH': '/cvmfs/grid.cern.ch/alma9-ui-current/usr/bin:/usr/bin',
+    'PYTHONPATH': '/cvmfs/grid.cern.ch/alma9-ui-current/usr/lib/python3.9/site-packages'
+  }
+
 def gfal_copy_safe(input_file, output_file, voms_token=None, number_of_streams=2, timeout=7200,
                    expected_adler32sum=None, n_retries=4, retry_sleep_interval=10, copy_mode='copy_flag', verbose=1):
   voms_token = get_voms_proxy_token(voms_token)
@@ -159,7 +166,7 @@ def gfal_copy(input_file, output_file, voms_token=None, number_of_streams=2, tim
       n_v = min(3, verbose-1)
       cmd.append('-' + 'v' * n_v)
     cmd.extend([ input_file, output_file ])
-    ps_call(cmd, shell=False, env={'X509_USER_PROXY': voms_token}, verbose=verbose,
+    ps_call(cmd, shell=False, env=gfal_env(voms_token), verbose=verbose,
             catch_stdout=catch_output, catch_stderr=catch_output)
   except PsCallError as e:
     raise GfalError(f'gfal_copy: unable to copy "{input_file}" to "{output_file}"\n{e}')
@@ -168,7 +175,7 @@ def gfal_ls(path, voms_token=None, catch_stderr=False, verbose=1):
   voms_token = get_voms_proxy_token(voms_token)
   try:
     _, output, _ = ps_call([ 'gfal-ls', '--long', '--all', '--time-style', 'long-iso', path ],
-                           shell=False, env={'X509_USER_PROXY': voms_token}, catch_stdout=True,
+                           shell=False, env=gfal_env(voms_token), catch_stdout=True,
                            catch_stderr=catch_stderr, split='\n', verbose=verbose)
   except PsCallError as e:
     raise GfalError(f'gfal_ls: unable to list "{path}"\n{e}')
@@ -228,7 +235,7 @@ def gfal_sum(path, voms_token=None, sum_type='adler32'):
   voms_token = get_voms_proxy_token(voms_token)
   try:
     _, output, _ = ps_call(['gfal-sum', path, sum_type ],
-                          shell=False, env={'X509_USER_PROXY': voms_token}, catch_stdout=True)
+                          shell=False, env=gfal_env(voms_token), catch_stdout=True)
     sum_str = output.split(' ')[-1]
     sum_int = int(sum_str, 16)
   except PsCallError as e:
@@ -245,7 +252,7 @@ def gfal_rm(path, voms_token=None, recursive=False, verbose=0, timeout=1800):
     cmd.append('-r')
   cmd.append(path)
   try:
-    ps_call(cmd, shell=False, env={'X509_USER_PROXY': voms_token}, catch_stdout=(verbose==0), verbose=verbose)
+    ps_call(cmd, shell=False, env=gfal_env(voms_token), catch_stdout=(verbose==0), verbose=verbose)
   except PsCallError as e:
     raise GfalError(f'gfal_rm: unable to remove "{path}"\n{e}')
 
@@ -255,7 +262,7 @@ def gfal_rm_recursive(path, voms_token=None, timeout=86400):
 def gfal_rename(path, new_path, voms_token=None):
   voms_token = get_voms_proxy_token(voms_token)
   try:
-    ps_call(['gfal-rename', path, new_path], shell=False, env={'X509_USER_PROXY': voms_token}, catch_stdout=True)
+    ps_call(['gfal-rename', path, new_path], shell=False, env=gfal_env(voms_token), catch_stdout=True)
   except PsCallError as e:
     raise GfalError(f'gfal_rename: unable to rename "{path}" to "{new_path}"\n{e}')
 
@@ -274,66 +281,14 @@ def path_to_pfn(path, *sub_paths):
     pfn = path
   return os.path.join(pfn, *sub_paths)
 
-def get_local_site():
-  local_conf = '/cvmfs/cms.cern.ch/SITECONF/local'
-  if os.path.exists(local_conf) and os.path.islink(local_conf):
-    return os.readlink(local_conf)
-  return None
-
-def get_distances(local_site, sites):
-  distances = {}
-  try:
-    from rucio.client import Client
-  except ImportError:
-    try:
-      _, out, _ = ps_call("""
-        ARCH=$(uname -m)/$(/cvmfs/cms.cern.ch/common/cmsos | cut -d_ -f1 | sed 's|^[a-z]*|rhel|');
-        echo /cvmfs/cms.cern.ch/rucio/$ARCH/py3/current;
-        echo /cvmfs/cms.cern.ch/rucio/$ARCH/py3/current/lib/python*/site-packages""",
-        shell=True, catch_stdout=True, split='\n')
-      sys.path.append(out[1])
-      os.environ['RUCIO_HOME'] = out[0]
-      from rucio.client import Client
-    except:
-      class Client:
-        def get_distance(self, site1, site2):
-          return [ { 'distance': 1 } ]
-  client = Client()
-  for site in sites:
-    if local_site is None or site == local_site:
-      distances[site] = 0
-    else:
-      try:
-        dist = client.get_distance(site, local_site)
-      except:
-        dist = []
-      if len(dist) > 0:
-        distances[site] = dist[0]['distance']
-      else:
-        distances[site] = float('inf')
-  return distances
-
-def run_dasgoclient(query, inputDBS='global', json_output=False, timeout=None, verbose=0):
+def das_file_site_info(file, inputDBS='global', verbose=0):
+  query = f'site file={file}'
   if inputDBS != 'global':
     query += f' instance=prod/{inputDBS}'
-  cmd = [ '/cvmfs/cms.cern.ch/common/dasgoclient', '--query', query ]
-  if json_output:
-    cmd.append('--json')
-  env = {
-    'PATH': '/usr/bin',
-    'X509_USER_PROXY': os.environ['X509_USER_PROXY'],
-    'HOME': os.environ.get('HOME', os.getcwd()),
-  }
-  split = None if json_output else '\n'
-  _, output, _ = ps_call(cmd, catch_stdout=True, split=split, timeout=timeout, verbose=verbose, env=env)
-  if json_output:
-    return json.loads(output)
-  return [ line.strip() for line in output if len(line.strip()) > 0 ]
+  _, output, _ = ps_call(['dasgoclient', '--json', '--query', query], catch_stdout=True, verbose=verbose)
+  return json.loads(output)
 
-def das_file_site_info(file, inputDBS='global', verbose=0):
-  return run_dasgoclient(f'site file={file}', inputDBS=inputDBS, json_output=True, verbose=verbose)
-
-def das_file_pfns(file, disk_only=True, return_adler32=False, inputDBS='global', keep_rse=False, verbose=0):
+def das_file_pfns(file, disk_only=True, return_adler32=False, inputDBS='global', verbose=0):
   site_info = das_file_site_info(file, inputDBS=inputDBS, verbose=verbose)
   pfns_all = {}
   adler32 = None
@@ -345,8 +300,7 @@ def das_file_pfns(file, disk_only=True, return_adler32=False, inputDBS='global',
         pnfs_type = pfns_info.get("type", 'UNKNOWN')
         if pnfs_type not in pfns_all:
           pfns_all[pnfs_type] = set()
-        entry = (pfns_link, pfns_info["rse"]) if keep_rse else pfns_link
-        pfns_all[pnfs_type].add(entry)
+        pfns_all[pnfs_type].add(pfns_link)
       if "adler32" in site:
         site_adler32 = int(site["adler32"], 16)
         if adler32 is not None and adler32 != site_adler32:
@@ -365,18 +319,8 @@ def copy_remote_file(input_remote_file, output_local_file, inputDBS='global', n_
   voms_token = get_voms_proxy_token(voms_token)
   from_das = input_remote_file.startswith('/store/')
   if from_das:
-    pfns_info, adler32 = das_file_pfns(input_remote_file, disk_only=True, return_adler32=True, inputDBS=inputDBS,
-                                       keep_rse=True, verbose=verbose)
-    sites = [ rse for _, rse in pfns_info ]
-    local_site = get_local_site()
-    distances = get_distances(local_site, sites)
-    pfns_info = [ (pfns, rse, distances[rse]) for pfns, rse in pfns_info ]
-    pfns_info = sorted(pfns_info, key=lambda x: (x[2], x[1]))
-    if verbose > 0:
-      print('Avaliable pfns:')
-      for pfns, rse, dist in pfns_info:
-        print(f'  {rse} (distance={dist}): {pfns}')
-    pfns_list = [ pfns for pfns, _, _ in pfns_info ]
+    pfns_list, adler32 = das_file_pfns(input_remote_file, disk_only=True, return_adler32=True, inputDBS=inputDBS,
+                                      verbose=verbose)
   else:
     if len(custom_pfns_prefix) > 0:
       file_pfns = custom_pfns_prefix + input_remote_file
