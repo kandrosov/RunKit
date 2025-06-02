@@ -281,14 +281,66 @@ def path_to_pfn(path, *sub_paths):
     pfn = path
   return os.path.join(pfn, *sub_paths)
 
-def das_file_site_info(file, inputDBS='global', verbose=0):
-  query = f'site file={file}'
+def get_local_site():
+  local_conf = '/cvmfs/cms.cern.ch/SITECONF/local'
+  if os.path.exists(local_conf) and os.path.islink(local_conf):
+    return os.readlink(local_conf)
+  return None
+
+def get_distances(local_site, sites):
+  distances = {}
+  try:
+    from rucio.client import Client
+  except ImportError:
+    try:
+      _, out, _ = ps_call("""
+        ARCH=$(uname -m)/$(/cvmfs/cms.cern.ch/common/cmsos | cut -d_ -f1 | sed 's|^[a-z]*|rhel|');
+        echo /cvmfs/cms.cern.ch/rucio/$ARCH/py3/current;
+        echo /cvmfs/cms.cern.ch/rucio/$ARCH/py3/current/lib/python*/site-packages""",
+        shell=True, catch_stdout=True, split='\n')
+      sys.path.append(out[1])
+      os.environ['RUCIO_HOME'] = out[0]
+      from rucio.client import Client
+    except:
+      class Client:
+        def get_distance(self, site1, site2):
+          return [ { 'distance': 1 } ]
+  client = Client()
+  for site in sites:
+    if local_site is None or site == local_site:
+      distances[site] = 0
+    else:
+      try:
+        dist = client.get_distance(site, local_site)
+      except:
+        dist = []
+      if len(dist) > 0:
+        distances[site] = dist[0]['distance']
+      else:
+        distances[site] = float('inf')
+  return distances
+
+def run_dasgoclient(query, inputDBS='global', json_output=False, timeout=None, verbose=0):
   if inputDBS != 'global':
     query += f' instance=prod/{inputDBS}'
-  _, output, _ = ps_call(['dasgoclient', '--json', '--query', query], catch_stdout=True, verbose=verbose)
-  return json.loads(output)
+  cmd = [ '/cvmfs/cms.cern.ch/common/dasgoclient', '--query', query ]
+  if json_output:
+    cmd.append('--json')
+  env = {
+    'PATH': '/usr/bin',
+    'X509_USER_PROXY': os.environ['X509_USER_PROXY'],
+    'HOME': os.environ.get('HOME', os.getcwd()),
+  }
+  split = None if json_output else '\n'
+  _, output, _ = ps_call(cmd, catch_stdout=True, split=split, timeout=timeout, verbose=verbose, env=env)
+  if json_output:
+    return json.loads(output)
+  return [ line.strip() for line in output if len(line.strip()) > 0 ]
 
-def das_file_pfns(file, disk_only=True, return_adler32=False, inputDBS='global', verbose=0):
+def das_file_site_info(file, inputDBS='global', verbose=0):
+  return run_dasgoclient(f'site file={file}', inputDBS=inputDBS, json_output=True, verbose=verbose)
+
+def das_file_pfns(file, disk_only=True, return_adler32=False, inputDBS='global', keep_rse=False, verbose=0):
   site_info = das_file_site_info(file, inputDBS=inputDBS, verbose=verbose)
   pfns_all = {}
   adler32 = None
@@ -300,7 +352,8 @@ def das_file_pfns(file, disk_only=True, return_adler32=False, inputDBS='global',
         pnfs_type = pfns_info.get("type", 'UNKNOWN')
         if pnfs_type not in pfns_all:
           pfns_all[pnfs_type] = set()
-        pfns_all[pnfs_type].add(pfns_link)
+        entry = (pfns_link, pfns_info["rse"]) if keep_rse else pfns_link
+        pfns_all[pnfs_type].add(entry)
       if "adler32" in site:
         site_adler32 = int(site["adler32"], 16)
         if adler32 is not None and adler32 != site_adler32:
@@ -319,8 +372,18 @@ def copy_remote_file(input_remote_file, output_local_file, inputDBS='global', n_
   voms_token = get_voms_proxy_token(voms_token)
   from_das = input_remote_file.startswith('/store/')
   if from_das:
-    pfns_list, adler32 = das_file_pfns(input_remote_file, disk_only=True, return_adler32=True, inputDBS=inputDBS,
-                                      verbose=verbose)
+    pfns_info, adler32 = das_file_pfns(input_remote_file, disk_only=True, return_adler32=True, inputDBS=inputDBS,
+                                       keep_rse=True, verbose=verbose)
+    sites = [ rse for _, rse in pfns_info ]
+    local_site = get_local_site()
+    distances = get_distances(local_site, sites)
+    pfns_info = [ (pfns, rse, distances[rse]) for pfns, rse in pfns_info ]
+    pfns_info = sorted(pfns_info, key=lambda x: (x[2], x[1]))
+    if verbose > 0:
+      print('Avaliable pfns:')
+      for pfns, rse, dist in pfns_info:
+        print(f'  {rse} (distance={dist}): {pfns}')
+    pfns_list = [ pfns for pfns, _, _ in pfns_info ]
   else:
     if len(custom_pfns_prefix) > 0:
       file_pfns = custom_pfns_prefix + input_remote_file
