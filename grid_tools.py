@@ -103,6 +103,12 @@ def create_tmp_local_file():
       f.write('0')
   return COPY_TMP_LOCAL_FILE
 
+def gfal_env(voms_token):
+  return {
+    'X509_USER_PROXY': voms_token,
+    'GFAL_PYTHONBIN': '/usr/bin/python3'
+  }
+
 def gfal_copy_safe(input_file, output_file, voms_token=None, number_of_streams=2, timeout=7200,
                    expected_adler32sum=None, n_retries=4, retry_sleep_interval=10, copy_mode='copy_flag', verbose=1):
   voms_token = get_voms_proxy_token(voms_token)
@@ -159,7 +165,7 @@ def gfal_copy(input_file, output_file, voms_token=None, number_of_streams=2, tim
       n_v = min(3, verbose-1)
       cmd.append('-' + 'v' * n_v)
     cmd.extend([ input_file, output_file ])
-    ps_call(cmd, shell=False, env={'X509_USER_PROXY': voms_token}, verbose=verbose,
+    ps_call(cmd, shell=False, env=gfal_env(voms_token), verbose=verbose,
             catch_stdout=catch_output, catch_stderr=catch_output)
   except PsCallError as e:
     raise GfalError(f'gfal_copy: unable to copy "{input_file}" to "{output_file}"\n{e}')
@@ -168,7 +174,7 @@ def gfal_ls(path, voms_token=None, catch_stderr=False, verbose=1):
   voms_token = get_voms_proxy_token(voms_token)
   try:
     _, output, _ = ps_call([ 'gfal-ls', '--long', '--all', '--time-style', 'long-iso', path ],
-                           shell=False, env={'X509_USER_PROXY': voms_token}, catch_stdout=True,
+                           shell=False, env=gfal_env(voms_token), catch_stdout=True,
                            catch_stderr=catch_stderr, split='\n', verbose=verbose)
   except PsCallError as e:
     raise GfalError(f'gfal_ls: unable to list "{path}"\n{e}')
@@ -228,7 +234,7 @@ def gfal_sum(path, voms_token=None, sum_type='adler32'):
   voms_token = get_voms_proxy_token(voms_token)
   try:
     _, output, _ = ps_call(['gfal-sum', path, sum_type ],
-                          shell=False, env={'X509_USER_PROXY': voms_token}, catch_stdout=True)
+                          shell=False, env=gfal_env(voms_token), catch_stdout=True)
     sum_str = output.split(' ')[-1]
     sum_int = int(sum_str, 16)
   except PsCallError as e:
@@ -245,7 +251,7 @@ def gfal_rm(path, voms_token=None, recursive=False, verbose=0, timeout=1800):
     cmd.append('-r')
   cmd.append(path)
   try:
-    ps_call(cmd, shell=False, env={'X509_USER_PROXY': voms_token}, catch_stdout=(verbose==0), verbose=verbose)
+    ps_call(cmd, shell=False, env=gfal_env(voms_token), catch_stdout=(verbose==0), verbose=verbose)
   except PsCallError as e:
     raise GfalError(f'gfal_rm: unable to remove "{path}"\n{e}')
 
@@ -255,7 +261,7 @@ def gfal_rm_recursive(path, voms_token=None, timeout=86400):
 def gfal_rename(path, new_path, voms_token=None):
   voms_token = get_voms_proxy_token(voms_token)
   try:
-    ps_call(['gfal-rename', path, new_path], shell=False, env={'X509_USER_PROXY': voms_token}, catch_stdout=True)
+    ps_call(['gfal-rename', path, new_path], shell=False, env=gfal_env(voms_token), catch_stdout=True)
   except PsCallError as e:
     raise GfalError(f'gfal_rename: unable to rename "{path}" to "{new_path}"\n{e}')
 
