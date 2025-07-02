@@ -300,6 +300,13 @@ if __name__ == "__main__":
       if len(skim_config) > 1:
         raise RuntimeError("Multiple setups are found in the config file, but setup name is not specified.")
       setup = list(skim_config.values())[0]
+    setup_ref = setup
+    while 'base' in setup_ref:
+      base_setup = skim_config[setup_ref['base']]
+      for key in base_setup:
+        if key not in setup:
+          setup[key] = base_setup[key]
+      setup_ref = base_setup
 
     input_tree = setup['input_tree']
     output_tree = setup.get('output_tree', input_tree)
@@ -316,7 +323,16 @@ if __name__ == "__main__":
     invert_sel = setup.get('invert_sel', False)
     column_filters = setup.get('column_filters', [])
     if 'processing_module' in setup:
-      processing_module = setup['processing_module']['file']
+      processing_module_entry = setup['processing_module']['file']
+      if type(processing_module_entry) is list:
+        for file in processing_module_entry:
+          if os.path.exists(file):
+            processing_module = file
+            break
+        if processing_module is None:
+          raise RuntimeError("Processing module file is not found.")
+      else:
+        processing_module = processing_module_entry
       processing_function = setup['processing_module']['function']
       processing_arguments = setup['processing_module'].get('arguments', [])
   else:
