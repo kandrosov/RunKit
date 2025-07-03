@@ -138,11 +138,17 @@ class ExceptionMatcher:
   def get_unused_patterns(self):
     return set(self.exceptions.keys()) - self.used_patterns
 
-def check_task_consistency(task_name, eras, all_eras, exception_matcher, era_results, name_matching,
-                           dataset_name_masks, show_only_missing_with_candidates, search_for_missing_candidates):
-  if not re.match('^[A-Za-z0-9_]+$', task_name):
+def check_task_consistency(task_name, eras, all_eras, exception_matcher, era_results, dataset_nameing_rules,
+                           show_only_missing_with_candidates, search_for_missing_candidates):
+  allowed_name_pattern = dataset_nameing_rules.get('allowed_name_pattern', None)
+  if allowed_name_pattern is not None and not re.match(allowed_name_pattern, task_name):
     print(f'{task_name} contains invalid characters')
     return False
+  known_name_variants = dataset_nameing_rules.get('known_name_variants', {})
+  for variant, replacement in known_name_variants.items():
+    if re.match(f'.*{variant}.*', task_name):
+      print(f'{task_name} contains "{variant}" in the name, use "{replacement}" instead')
+      return False
   n_eras = len(all_eras)
   is_data = era_results[eras[0]].tasks_by_name[task_name][0]['isData']
   exception_match_ok, known_exceptions, known_exception_to_pattern = exception_matcher.get_known_exceptions(task_name)
@@ -153,7 +159,7 @@ def check_task_consistency(task_name, eras, all_eras, exception_matcher, era_res
   if len(redundant_exceptions) > 0:
     known_exceptions_str = ', '.join(known_exceptions)
     redundant_exceptions_str = ', '.join(redundant_exceptions)
-    known_exception_patterns_str = ', '.join(known_exception_to_pattern.keys())
+    known_exception_patterns_str = ', '.join(set([ k for v in known_exception_to_pattern.values() for k in v ]))
     print(f'{task_name} is listed as exception for [{known_exceptions_str}] in [{known_exception_patterns_str}]'
           f', but it exists for [{redundant_exceptions_str}]')
     return False
@@ -162,6 +168,7 @@ def check_task_consistency(task_name, eras, all_eras, exception_matcher, era_res
     missing_prints = [ f'{task_name} is not available in: {missing_eras_str}' ]
     print_missing = not show_only_missing_with_candidates
     dataset_names = set()
+    dataset_name_masks = dataset_nameing_rules.get('full_name_masks', {})
     for era in eras:
       for task in era_results[era].tasks_by_name[task_name]:
         missing_prints.append(f'  era={era} file={task["file"]} dataset={task["inputDataset"]}')
@@ -198,6 +205,7 @@ def check_task_consistency(task_name, eras, all_eras, exception_matcher, era_res
     return False
   file_names = {}
   datasets = {}
+  name_matchings = dataset_nameing_rules.get('name_matchings', [])
   for era in eras:
     for task in era_results[era].tasks_by_name[task_name]:
       file_name = os.path.split(task['file'])[1]
@@ -207,8 +215,7 @@ def check_task_consistency(task_name, eras, all_eras, exception_matcher, era_res
       dataset = task['inputDataset']
       dataset_name = dataset.split('/')[1]
       dataset_name_ref = dataset_name.lower()
-      for matching_entry in name_matching:
-        pattern, replacement = matching_entry.split(':')
+      for pattern, replacement in name_matchings:
         dataset_name_ref = re.sub(pattern.lower(), replacement.lower(), dataset_name_ref)
       if dataset_name_ref not in datasets:
         datasets[dataset_name_ref] = []
@@ -218,7 +225,7 @@ def check_task_consistency(task_name, eras, all_eras, exception_matcher, era_res
     for file_name, eras in file_names.items():
       print(f'  {file_name} in {", ".join(eras)}')
     return False
-  if len(name_matching) > 0:
+  if len(name_matchings) > 0:
     if len(datasets) > 1:
       print(f'{task_name} is used to refer different datasets:')
       for ref_name, era_list in datasets.items():
@@ -227,11 +234,12 @@ def check_task_consistency(task_name, eras, all_eras, exception_matcher, era_res
       return False
   return True
 
-def check_consistency(era_files_dict, exceptions, name_matching, dataset_name_masks, show_only_missing_with_candidates,
+def check_consistency(era_files_dict, exceptions, dataset_naming_rules, show_only_missing_with_candidates,
                       search_for_missing_candidates):
   era_results = {}
   tasks_by_name = {}
   all_ok = True
+  dataset_name_masks = dataset_naming_rules.get('full_name_masks', None)
   for era, files in era_files_dict.items():
     if dataset_name_masks is None:
       dataset_name_mask_mc = None
@@ -251,8 +259,8 @@ def check_consistency(era_files_dict, exceptions, name_matching, dataset_name_ma
   exception_matcher = ExceptionMatcher(exceptions)
   all_eras = set(era_files_dict.keys())
   for task_name, eras in tasks_by_name.items():
-    task_consistent = check_task_consistency(task_name, eras, all_eras, exception_matcher, era_results, name_matching,
-                                             dataset_name_masks, show_only_missing_with_candidates,
+    task_consistent = check_task_consistency(task_name, eras, all_eras, exception_matcher, era_results,
+                                             dataset_naming_rules, show_only_missing_with_candidates,
                                              search_for_missing_candidates)
 
     all_ok = all_ok and task_consistent
@@ -268,10 +276,8 @@ if __name__ == "__main__":
   parser.add_argument('--era', type=str, required=False, default=None, help='Era')
   parser.add_argument('--exceptions', type=str, required=False, default=None,
                       help='File with exceptions for the checks.')
-  parser.add_argument('--name-matching', type=str, required=False, default=[], action='append',
-                      help='Matching equivalence between dataset names (multiple matching transformations accepted).')
-  parser.add_argument('--dataset-name-masks', type=str, required=False, default=None,
-                      help='File with expected masks for dataset names in DAS for data and MC')
+  parser.add_argument('--dataset-naming-rules', type=str, required=False, default=None,
+                      help='File with naming rules')
   parser.add_argument('--show-only-missing-with-candidates', action='store_true',
                       help='Only show missing samples that have potential candidates in DAS.')
   parser.add_argument('--search-for-missing-candidates', action='store_true',
@@ -292,10 +298,10 @@ if __name__ == "__main__":
       raise RuntimeError("Era is not specified.")
     era_files_dict[args.era] = args.task_file
 
-  dataset_name_masks = None
-  if args.dataset_name_masks:
-    with open(args.dataset_name_masks) as f:
-      dataset_name_masks = yaml.safe_load(f)
+  dataset_naming_rules = {}
+  if args.dataset_naming_rules:
+    with open(args.dataset_naming_rules) as f:
+      dataset_naming_rules = yaml.safe_load(f)
 
   exceptions = {}
   if args.exceptions:
@@ -303,7 +309,7 @@ if __name__ == "__main__":
       exceptions = yaml.safe_load(f)
 
 
-  all_ok = check_consistency(era_files_dict, exceptions, args.name_matching, dataset_name_masks,
+  all_ok = check_consistency(era_files_dict, exceptions, dataset_naming_rules,
                              args.show_only_missing_with_candidates, args.search_for_missing_candidates)
 
   if all_ok:
