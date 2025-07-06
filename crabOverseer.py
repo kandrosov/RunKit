@@ -629,6 +629,7 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
         break
     if main_cfg.get('renewKerberosTicket', False):
       ps_call(['kinit', '-R'])
+      ps_call(['aklog'])
   if not has_unfinished:
     print("All tasks are done.")
 
