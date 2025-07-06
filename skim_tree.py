@@ -324,15 +324,17 @@ if __name__ == "__main__":
     column_filters = setup.get('column_filters', [])
     if 'processing_module' in setup:
       processing_module_entry = setup['processing_module']['file']
-      if type(processing_module_entry) is list:
-        for file in processing_module_entry:
-          if os.path.exists(file):
-            processing_module = file
-            break
-        if processing_module is None:
-          raise RuntimeError("Processing module file is not found.")
-      else:
-        processing_module = processing_module_entry
+      config_path = os.path.dirname(args.config)
+      if type(processing_module_entry) is str:
+        processing_module_entry = [ processing_module_entry ]
+      for file in processing_module_entry:
+        if file.startswith('.'):
+          file = os.path.join(config_path, file)
+        if os.path.exists(file):
+          processing_module = file
+          break
+      if processing_module is None:
+        raise RuntimeError(f"Processing module file is not found in [ {', '.join(processing_module_entry)} ].")
       processing_function = setup['processing_module']['function']
       processing_arguments = setup['processing_module'].get('arguments', [])
   else:
