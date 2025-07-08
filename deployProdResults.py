@@ -1,11 +1,10 @@
 import glob
 import json
 import os
+import re
 import sys
 import tempfile
 import yaml
-
-import ROOT
 
 if __name__ == "__main__":
   file_dir = os.path.dirname(os.path.abspath(__file__))
@@ -13,7 +12,7 @@ if __name__ == "__main__":
   __package__ = 'RunKit'
 
 from .run_tools import print_ts, ps_call, natural_sort
-from .grid_tools import get_voms_proxy_info, gfal_copy_safe, lfn_to_pfn, gfal_ls, gfal_exists
+from .grid_tools import get_voms_proxy_info, gfal_copy_safe, lfn_to_pfn, gfal_exists
 
 def load_config(cfg_file, era):
   with open(cfg_file) as f:
@@ -38,22 +37,28 @@ def load_config(cfg_file, era):
       output.append(value)
     return output
 
-  for key in [ 'task_files', 'outputs', 'config_files' ]:
+  for key in [ 'task_files', 'outputs', 'config_files', 'files_to_ignore' ]:
     values = set()
     for value in raw_cfg.get(key, []):
       values.update(process_value(value))
     cfg[key] = sorted(values)
-  for key in [ 'storage', 'info', 'prod_report_file', 'title' ]:
+  for key in [ 'storage', 'info', 'title' ]:
     if key not in raw_cfg:
       raise RuntimeError(f'"{key}" not found in "{cfg_file}" for era="{era}".')
     value = process_value(raw_cfg[key])
     if len(value) != 1:
       raise RuntimeError(f'Unable to extract "{key}" from "{cfg_file}" for era="{era}".')
     cfg[key] = value[0]
+  for key in [ 'prod_flavours' ]:
+    if key not in raw_cfg:
+      raise RuntimeError(f'"{key}" not found in "{cfg_file}" for era="{era}".')
+    cfg[key] = raw_cfg[key]
 
   tasks = {}
   datasets = {}
   for task_file in cfg['task_files']:
+    file_name = os.path.split(task_file)[1]
+    if file_name in cfg['files_to_ignore']: continue
     with open(task_file) as f:
       task_yaml = yaml.safe_load(f)
     for task_name, task_desc in task_yaml.items():
@@ -88,8 +93,24 @@ def load_config(cfg_file, era):
   if not all_ok:
     raise RuntimeError('Production configuration is not consistent')
 
-  cfg['tasks'] = { task_name: task_entries[0]['dataset'] for task_name, task_entries in tasks.items() }
   cfg['datasets'] = { dataset: dataset_entries[0]['name'] for dataset, dataset_entries in datasets.items() }
+  cfg['tasks'] = {}
+  for task_name, task_entries in tasks.items():
+    task_entry = { 'dataset': task_entries[0]['dataset'], 'flavours': {} }
+    for flavour_entry in cfg['prod_flavours']:
+      if re.match(flavour_entry['task_name_pattern'], task_name):
+        for flavour, prod_report in flavour_entry['flavours'].items():
+          task_entry['flavours'][flavour] = { 'prod_report': prod_report }
+        break
+    if len(task_entry['flavours']) == 0:
+      raise RuntimeError(f'No production flavours found for task "{task_name}".')
+    for flavour in task_entry['flavours'].keys():
+      if len(task_entry['flavours']) == 1:
+        full_name = task_name
+      else:
+        full_name = f'{task_name}-{flavour}'
+      task_entry['flavours'][flavour]['full_name'] = full_name
+    cfg['tasks'][task_name] = task_entry
 
   return cfg
 
@@ -107,7 +128,6 @@ def copy_info_files(info_path, files_to_copy, voms_token):
     file_out = os.path.join(info_path, file_out)
     print(f'{file_in} -> {file_out}')
     gfal_copy_safe(file_in, file_out, voms_token=voms_token, verbose=0)
-
 
 def update_eras_info(cfg, era, tmp_dir, voms_token, dry_run):
   eras_json_path = os.path.join(cfg['info'], 'eras.json')
@@ -155,12 +175,12 @@ def update_eras_info(cfg, era, tmp_dir, voms_token, dry_run):
     files_to_copy = [ [ 'index_era.html', 'index.html'], datasets_tmp ]
     copy_info_files(os.path.join(cfg['info'], era), files_to_copy, voms_token)
 
-def find_dataset_report(cfg, era, task_name, voms_token):
-  task_report_path = os.path.join(cfg['storage'], era, task_name, cfg['prod_report_file'])
+def find_dataset_report(cfg, era, task_name, prod_report_file, voms_token):
+  task_report_path = os.path.join(cfg['storage'], era, task_name, prod_report_file)
   if gfal_exists(task_report_path, voms_token=voms_token):
     return task_report_path, True, None
   for output in cfg['outputs']:
-    task_report_path = os.path.join(output, task_name, cfg['prod_report_file'])
+    task_report_path = os.path.join(output, task_name, prod_report_file)
     if gfal_exists(task_report_path, voms_token=voms_token):
       return task_report_path, False, output
   return None, False, None
@@ -171,13 +191,16 @@ def check_consistency(cfg, datasets_info):
   datasets_by_path = {}
   for dataset in datasets_info['datasets']:
     name = dataset['name']
+    flavour = dataset.get('flavour', '')
     path = dataset['dataset']
     if name not in datasets_by_name:
-      datasets_by_name[name] = []
-    datasets_by_name[name].append(path)
+      datasets_by_name[name] = set()
+    datasets_by_name[name].add(path)
     if path not in datasets_by_path:
-      datasets_by_path[path] = []
-    datasets_by_path[path].append(name)
+      datasets_by_path[path] = {}
+    if name not in datasets_by_path[path]:
+      datasets_by_path[path][name] = []
+    datasets_by_path[path][name].append(flavour)
   for dataset_name, paths in datasets_by_name.items():
     if len(paths) != 1:
       paths_str = ', '.join(paths)
@@ -185,17 +208,16 @@ def check_consistency(cfg, datasets_info):
       all_ok = False
   for dataset_path, names in datasets_by_path.items():
     if len(names) != 1:
-      names_str = ', '.join(names)
+      names_str = ', '.join(names.keys())
       print(f'ERROR: path "{dataset_path}" is refered by multiple names: {names_str}')
       all_ok = False
   if not all_ok:
     return False
 
-  datasets_by_name = { name: paths[0] for name, paths in datasets_by_name.items() }
-  datasets_by_path = { path: names[0] for path, names in datasets_by_path.items() }
+  datasets_by_name = { name: next(iter(paths)) for name, paths in datasets_by_name.items() }
 
   for name, dataset in datasets_by_name.items():
-    if name in cfg['tasks'] and dataset == cfg['tasks'][name]:
+    if name in cfg['tasks'] and dataset == cfg['tasks'][name]['dataset']:
       continue
     all_ok = False
     dataset_found = dataset in cfg['datasets']
@@ -205,7 +227,7 @@ def check_consistency(cfg, datasets_info):
       print(f' {name} != {cfg["datasets"][dataset]}')
     if name_found:
       print(f'ERROR: deployed dataset != production dataset for name={name}:')
-      print(f' {dataset} != {cfg["tasks"][name]}')
+      print(f' {dataset} != {cfg["tasks"][name]["dataset"]}')
     if not name_found and not dataset_found:
       print(f'ERROR: deployed name={name} dataset={dataset}" is not defined in the production configuration.')
 
@@ -238,72 +260,76 @@ def deploy_prod_results(cfg_file, era, dry_run=False, check_only=False, output_m
   task_names = natural_sort(cfg['tasks'].keys())
   print('Checking datasets availability...')
   for task_name in task_names:
-    task_dataset = cfg['tasks'][task_name]
-    dataset_exists = False
-    for dataset in datasets_info['datasets']:
-      if dataset['name'] == task_name:
-        dataset_exists = True
-        break
-    if dataset_exists:
-      continue
-    task_report_path, from_storage, output_node = find_dataset_report(cfg, era, task_name, voms_token)
-    if task_report_path is None:
-      missing_tasks.add(task_name)
-      continue
-    dry_run_str = ' (dry run)' if dry_run else ''
-    print_ts(f'Adding new task {task_name} {dry_run_str}...')
-    if dry_run:
-      continue
+    task_dataset = cfg['tasks'][task_name]['dataset']
+    for flavour, flavour_entry in cfg['tasks'][task_name]['flavours'].items():
+      full_name = flavour_entry['full_name']
+      dataset_exists = False
+      for dataset in datasets_info['datasets']:
+        if dataset['full_name'] == full_name:
+          dataset_exists = True
+          break
+      if dataset_exists:
+        continue
+      task_report_path, from_storage, output_node = find_dataset_report(cfg, era, task_name,
+                                                                        flavour_entry['prod_report'], voms_token)
+      if task_report_path is None:
+        missing_tasks.add(task_name)
+        continue
+      dry_run_str = ' (dry run)' if dry_run else ''
+      print_ts(f'Adding new task {task_name} (flavour={flavour}) {dry_run_str}...')
+      if dry_run:
+        continue
 
-    report_tmp = os.path.join(tmp_dir, 'report.json')
-    gfal_copy_safe(task_report_path, report_tmp, voms_token=voms_token, verbose=0)
-    with open(report_tmp) as f:
-      report = json.load(f)
+      report_tmp = os.path.join(tmp_dir, 'report.json')
+      gfal_copy_safe(task_report_path, report_tmp, voms_token=voms_token, verbose=0)
+      with open(report_tmp) as f:
+        report = json.load(f)
 
-    if report['inputDataset'] != task_dataset:
-      raise RuntimeError(f'Inconsistent dataset definition for {task_name}: {report["dataset"]} != {task_dataset}')
+      if report['inputDataset'] != task_dataset:
+        raise RuntimeError(f'Inconsistent dataset definition for {task_name}: {report["dataset"]} != {task_dataset}')
 
-    if not from_storage:
-      for output_file in list(report['outputs'].keys()) + [ cfg['prod_report_file'] ]:
-        input_path = os.path.join(output_node, task_name, output_file)
+      if not from_storage:
+        for output_file in list(report['outputs'].keys()) + [ flavour_entry['prod_report'] ]:
+          input_path = os.path.join(output_node, task_name, output_file)
+          output_path = os.path.join(cfg['storage'], era, task_name, output_file)
+          print_ts(f'{input_path} -> {output_path}')
+          gfal_copy_safe(input_path, output_path, voms_token=voms_token, verbose=0)
+
+      stats = { key: 0 for key in [ 'size', 'n_selected', 'n_not_selected', 'n_selected_original',
+                                    'n_not_selected_original', 'size_original' ] }
+      output_files = []
+      for output_file, output_desc in report['outputs'].items():
         output_path = os.path.join(cfg['storage'], era, task_name, output_file)
-        print_ts(f'{input_path} -> {output_path}')
-        gfal_copy_safe(input_path, output_path, voms_token=voms_token, verbose=0)
+        output_files.append(output_path)
+        for stat_key in stats.keys():
+          stats[stat_key] += output_desc[stat_key]
 
-    stats = { key: 0 for key in [ 'size', 'n_selected', 'n_not_selected', 'n_selected_original',
-                                  'n_not_selected_original', 'size_original' ] }
-    output_files = []
-    for output_file, output_desc in report['outputs'].items():
-      output_path = os.path.join(cfg['storage'], era, task_name, output_file)
-      output_files.append(output_path)
-      for stat_key in stats.keys():
-        stats[stat_key] += output_desc[stat_key]
+      size_report_tmp = os.path.join(tmp_dir, f'{full_name}_size.html')
+      doc_report_tmp = os.path.join(tmp_dir, f'{full_name}_doc.html')
+      json_report_tmp = os.path.join(tmp_dir, f'{full_name}_report.json')
 
-    size_report_tmp = os.path.join(tmp_dir, f'{task_name}_size.html')
-    doc_report_tmp = os.path.join(tmp_dir, f'{task_name}_doc.html')
-    json_report_tmp = os.path.join(tmp_dir, f'{task_name}_report.json')
+      root_tmp = os.path.join(tmp_dir, f'{full_name}.root')
+      print_ts(f'{output_files[0]} -> {root_tmp}')
+      gfal_copy_safe(output_files[0], root_tmp, voms_token=voms_token, verbose=0)
+      cmd= [ 'python', os.path.join(os.environ['ANALYSIS_PATH'], 'RunKit', 'inspectNanoFile.py'),
+            '-j', json_report_tmp, '-s', size_report_tmp, '-d', doc_report_tmp, root_tmp ]
+      ps_call(cmd, verbose=1)
+      if os.path.exists(root_tmp):
+        os.remove(root_tmp)
 
-    root_tmp = os.path.join(tmp_dir, f'{task_name}.root')
-    print_ts(f'{output_files[0]} -> {root_tmp}')
-    gfal_copy_safe(output_files[0], root_tmp, voms_token=voms_token, verbose=0)
-    cmd= [ 'python', os.path.join(os.environ['ANALYSIS_PATH'], 'RunKit', 'inspectNanoFile.py'),
-           '-j', json_report_tmp, '-s', size_report_tmp, '-d', doc_report_tmp, root_tmp ]
-    ps_call(cmd, verbose=1)
-    if os.path.exists(root_tmp):
-      os.remove(root_tmp)
+      dataset = { 'name': task_name, 'flavour': flavour, 'full_name': full_name, 'dataset': report['inputDataset'],
+                  'n_files': len(output_files) }
+      dataset.update(stats)
 
-    dataset = { 'name': task_name, 'dataset': report['inputDataset'], 'n_files': len(output_files) }
-    dataset.update(stats)
+      print(json.dumps(dataset, indent=2))
+      datasets_info['datasets'].append(dataset)
+      datasets_info['datasets'] = sorted(datasets_info['datasets'], key=lambda x: x['full_name'])
+      with open(datasets_tmp, 'w') as f:
+        json.dump(datasets_info, f, indent=2)
 
-    print(json.dumps(dataset, indent=2))
-    datasets_info['datasets'].append(dataset)
-    datasets_info['datasets'] = sorted(datasets_info['datasets'], key=lambda x: x['name'])
-    with open(datasets_tmp, 'w') as f:
-      json.dump(datasets_info, f, indent=2)
-
-    files_to_copy = [ size_report_tmp, doc_report_tmp, json_report_tmp, datasets_tmp ]
-    copy_info_files(os.path.join(cfg['info'], era), files_to_copy, voms_token)
-    print_ts(f'{task_name} added.')
+      files_to_copy = [ size_report_tmp, doc_report_tmp, json_report_tmp, datasets_tmp ]
+      copy_info_files(os.path.join(cfg['info'], era), files_to_copy, voms_token)
+      print_ts(f'{task_name} added.')
 
   print(f'Total number of tasks: {len(cfg["tasks"])}')
   missing_tasks = natural_sort(missing_tasks)
