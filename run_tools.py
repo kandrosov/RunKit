@@ -127,12 +127,23 @@ def ps_call(cmd, shell=False, catch_stdout=False, catch_stderr=False, decode=Tru
 
   return proc.returncode, output, err
 
-def timestamp_str():
-  t = datetime.datetime.now()
+def timestamp_str(timestamp=None):
+  t = timestamp or datetime.datetime.now()
   return t.strftime('%Y-%m-%d %H:%M:%S')
 
-def print_ts(msg, prefix='', *args, **kwargs):
-  print(f'{prefix}[{timestamp_str()}] {msg}', *args, **kwargs)
+def print_ts(msg, prefix='', timestamp=None, *args, **kwargs):
+  print(f'{prefix}[{timestamp_str(timestamp=timestamp)}] {msg}', *args, **kwargs)
+
+class PrintOpt:
+  def __init__(self, min_interval=60):
+    self.last_print = None
+    self.min_interval = min_interval
+
+  def __call__(self, msg, force=False, prefix='', *args, **kwargs):
+    now = datetime.datetime.now()
+    if force or (self.last_print is None or (now - self.last_print).total_seconds() >= self.min_interval):
+      print_ts(msg, prefix=prefix, timestamp=now, *args, **kwargs)
+      self.last_print = now
 
 def update_kerberos_ticket(verbose=1):
   ps_call(['kinit', '-R'], verbose=verbose)

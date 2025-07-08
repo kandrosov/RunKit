@@ -17,7 +17,7 @@ if __name__ == "__main__":
 from .crabTaskStatus import JobStatus, Status
 from .crabTask import Task
 from .crabLaw import LawTaskManager
-from .run_tools import PsCallError, ps_call, print_ts, timestamp_str
+from .run_tools import PsCallError, ps_call, print_ts, timestamp_str, PrintOpt
 from .grid_tools import get_voms_proxy_info, gfal_copy_safe, path_to_pfn, gfal_rm, gfal_exists
 
 class TaskStat:
@@ -175,14 +175,17 @@ def sanity_checks(task):
   return True
 
 def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=False):
-  print_ts("Updating...")
+  print_opt = PrintOpt(min_interval=60)
+  print_opt("Updating...", force=True)
   stat = TaskStat()
   to_post_process = []
   to_remove_output = []
   to_run_locally = []
   to_submit = []
   to_recover = []
-  for task_name, task in tasks.items():
+  n_tasks = len(tasks)
+  for task_idx, (task_name, task) in enumerate(tasks.items()):
+    print_opt(f'Updated {task_idx} of {n_tasks} tasks.')
     if task.taskStatus.status == Status.Defined:
       to_submit.append(task)
     elif task.taskStatus.status.value < Status.CrabFinished.value:
@@ -200,11 +203,11 @@ def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=F
           task.endDate = timestamp_str()
           task.saveStatus()
           task.saveCfg()
-          print(f'{task.name}: post-processing is done.')
+          print_opt(f'{task.name}: post-processing is done.', force=True)
         else:
           failed_flag = task.getPostProcessingFaliedFlagFile()
           if os.path.exists(failed_flag):
-            print(f'{task.name}: post-processing failed. Checking consistency of processed files...')
+            print_opt(f'{task.name}: post-processing failed. Checking consistency of processed files...', force=True)
             if not task.checkProcessedFiles(lawTaskManager=lawTaskManager, resetStatus=True):
               to_recover.append(task)
               lawTaskManager.add(task.workArea, -1, done_flag, failed_flag=failed_flag, ready_to_run=False)
@@ -226,7 +229,7 @@ def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=F
       else:
         task.taskStatus.status = Status.Finished
         task.saveStatus()
-        print(f'{task.name}: finished.')
+        print_opt(f'{task.name}: finished.', force=True)
 
   nActiveCrabTasks = 0
   for task_name, task in tasks.items():
