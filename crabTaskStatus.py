@@ -353,6 +353,7 @@ class LogEntryParser:
     "The task failed to bootstrap on the Grid scheduler": bootstrap_failed,
     "Rucio client intialized for account": "account",
     "Waiting for the Grid scheduler to bootstrap your task": waiting_for_bootstrap,
+    "Rucio client could not be intialized, some funcionalities may not work.": None,
   }
   error_summary_end = "Have a look at https://twiki.cern.ch/twiki/bin/viewauth/CMSPublic/JobExitCodes for a description of the exit codes."
   status_will_be_available = "Status information will be available within a few minutes"
@@ -405,6 +406,8 @@ class CrabTaskStatus:
     return jobs
 
   def task_id(self):
+    if self.task_name is None:
+      return None
     return self.task_name.split(':')[0]
 
   def to_json(self):

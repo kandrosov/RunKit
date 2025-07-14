@@ -25,7 +25,8 @@ class Task:
     'cmsswPython', 'params', 'unitsPerJob', 'scriptExe', 'filesToTransfer',
     'lumiMask', 'maxMemory', 'numCores', 'inputDBS', 'allowNonValid', 'autoIgnoreCorrupt',
     'vomsGroup', 'vomsRole', 'blacklist', 'whitelist', 'whitelistFinalRecovery', 'dryrun',
-    'maxRecoveryCount', 'targetOutputFileSize', 'ignoreFiles', 'ignoreLocality', 'crabType'
+    'maxRecoveryCount', 'targetOutputFileSize', 'ignoreFiles', 'ignoreLocality', 'crabType',
+    'removeCrabInputsAfterSubmit',
   ]
 
   _taskCfgPrivateProperties = [
@@ -82,6 +83,7 @@ class Task:
     self.singularity_cmd = os.environ.get('CMSSW_SINGULARITY', None)
     if self.singularity_cmd is not None and len(self.singularity_cmd) == 0:
       self.singularity_cmd = None
+    self.removeCrabInputsAfterSubmit = True
 
   def checkConfigurationValidity(self):
     def check(cond, prop):
@@ -363,8 +365,10 @@ class Task:
     if recoveryIndex is None:
       recoveryIndex = self.recoveryIndex
     if recoveryIndex not in self.taskIds:
-      self.taskIds[recoveryIndex] = self.getTaskStatus(recoveryIndex=recoveryIndex).task_id()
-      self.saveCfg()
+      task_id = self.getTaskStatus(recoveryIndex=recoveryIndex).task_id()
+      if task_id is not None:
+        self.taskIds[recoveryIndex] = task_id
+        self.saveCfg()
     return self.taskIds[recoveryIndex]
 
   def postProcessOutputs(self, job_home):
@@ -475,10 +479,18 @@ class Task:
         print(f'{self.name}: submitting ...')
       try:
         timeout = None if self.dryrun else Task.crabOperationTimeout
+        crabArea = self.crabArea()
+        if os.path.exists(crabArea):
+          shutil.rmtree(crabArea)
         ps_call(f'python3 {crabSubmitPath} {self.workArea}', shell=True, timeout=timeout, env=self.getCmsswEnv(),
                 singularity_cmd=self.singularity_cmd)
         self.taskStatus.status = Status.Submitted
         self.saveStatus()
+        if self.removeCrabInputsAfterSubmit:
+          print(f'{self.name}: removing crab inputs after a successful submit.')
+          inputs_dir = os.path.join(self.crabArea(), 'inputs')
+          if os.path.exists(inputs_dir):
+            shutil.rmtree(inputs_dir)
       except PsCallError as e:
         crabArea = self.crabArea()
         if os.path.exists(crabArea):

@@ -185,7 +185,7 @@ def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=F
   to_recover = []
   n_tasks = len(tasks)
   for task_idx, (task_name, task) in enumerate(tasks.items()):
-    print_opt(f'Updated {task_idx} of {n_tasks} tasks.')
+    print_opt(f'Updated {task_idx} out of {n_tasks} tasks.')
     if task.taskStatus.status == Status.Defined:
       to_submit.append(task)
     elif task.taskStatus.status.value < Status.CrabFinished.value:
