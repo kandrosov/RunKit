@@ -459,9 +459,11 @@ class Task:
   def lastCrabStatusLog(self):
     return os.path.join(self.workArea, 'lastCrabStatus.txt')
 
-  def submit(self, lawTaskManager=None, allowCrabAction=True):
+  def submit(self, lawTaskManager=None, allowCrabAction=True, forceLocal=False):
     self.getDatasetFiles()
     self.checkOutputWriteAccess()
+    if forceLocal:
+      self.recoveryIndex = self.maxRecoveryCount
     if self.isInLocalRunMode():
       self.taskStatus = CrabTaskStatus()
       self.taskStatus.status = Status.SubmittedToLocal
@@ -583,7 +585,7 @@ class Task:
       self.saveCfg()
     return neen_local_run
 
-  def recover(self, lawTaskManager=None, allowCrabAction=True):
+  def recover(self, lawTaskManager=None, allowCrabAction=True, forceLocal=False):
     filesToProcess = self.getFilesToProcess()
     if len(filesToProcess) == 0:
       print(f'{self.name}: no recovery is needed. All files have been processed.')
@@ -591,11 +593,12 @@ class Task:
       self.saveStatus()
       return (False, False)
 
-    if self.isInLocalRunMode(recoveryIndex=self.recoveryIndex+1):
+    nextRecoveryIndex = self.maxRecoveryCount if forceLocal else self.recoveryIndex + 1
+    if self.isInLocalRunMode(recoveryIndex=nextRecoveryIndex):
       print(f'{self.name}: creating a local recovery task\nFiles to process: ' + ', '.join(filesToProcess))
-      if self.recoveryIndex == self.maxRecoveryCount - 1:
+      if nextRecoveryIndex == self.maxRecoveryCount:
         shutil.copy(self.statusPath, os.path.join(self.workArea, f'status_{self.recoveryIndex}.json'))
-        self.recoveryIndex += 1
+        self.recoveryIndex = nextRecoveryIndex
         self.jobInputFiles = None
         self.lastJobStatusUpdate = -1.
         self.saveCfg()

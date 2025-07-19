@@ -138,10 +138,16 @@ class TaskStat:
       names = [ task.name for task in self.failed ]
       print(f"Failed tasks that require manual intervention: {', '.join(names)}")
 
-def sanity_checks(task):
+def sanity_checks(task, forceLocalRun):
   abnormal_inactivity_thr = task.getMaxJobRuntime() + 1
 
   if task.taskStatus.status in [ Status.InProgress, Status.Submitted ]:
+    if forceLocalRun:
+      print(f'{task.name}: due to low number of remaining files to process, the tast will be killed and submitted'
+             ' to the local queue, which is expected to be more efficient to "catching the tails".'
+             ' To disable this behaviour set forceLocalThreshold parameter to -1 (default value).')
+      task.kill()
+      return True
     delta_t = task.getTimeSinceLastJobStatusUpdate()
     if delta_t > abnormal_inactivity_thr:
       text = f'{task.name}: status of all jobs is not changed for at least {delta_t:.1f} hours.' \
@@ -174,7 +180,8 @@ def sanity_checks(task):
 
   return True
 
-def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=False):
+def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=False, previous_stat=None,
+           forceLocalThreshold=-1):
   print_opt = PrintOpt(min_interval=60)
   print_opt("Updating...", force=True)
   stat = TaskStat()
@@ -184,6 +191,8 @@ def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=F
   to_submit = []
   to_recover = []
   n_tasks = len(tasks)
+  forceLocalRun = previous_stat is not None and forceLocalThreshold > 0 \
+                  and previous_stat.n_files_to_process < forceLocalThreshold
   for task_idx, (task_name, task) in enumerate(tasks.items()):
     print_opt(f'Updated {task_idx} out of {n_tasks} tasks.')
     if task.taskStatus.status == Status.Defined:
@@ -194,7 +203,7 @@ def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=F
           to_run_locally.append(task)
       if task.taskStatus.status == Status.WaitingForRecovery:
         to_recover.append(task)
-    sanity_checks(task)
+    sanity_checks(task, forceLocalRun)
     if task.taskStatus.status == Status.CrabFinished:
       if task.checkCompleteness():
         done_flag = task.getPostProcessingDoneFlagFile()
@@ -242,7 +251,8 @@ def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=F
   for task, action in to_act:
     allowCrabAction = nActiveCrabTasks < maxNumberOfActiveCrabTasks
     need_local_run, crab_task_submitted = getattr(task, action)(lawTaskManager=lawTaskManager,
-                                                                allowCrabAction=allowCrabAction)
+                                                                allowCrabAction=allowCrabAction,
+                                                                forceLocal=forceLocalRun)
     if need_local_run:
       to_run_locally.append(task)
     if crab_task_submitted:
@@ -258,7 +268,7 @@ def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=F
   print_ts("Saving state...")
   lawTaskManager.save()
   print_ts("Update finished.")
-  return to_remove_output, to_post_process, to_run_locally, stat.status
+  return to_remove_output, to_post_process, to_run_locally, stat
 
 class Action(ABC):
   def __init__(self, name, args):
@@ -550,17 +560,20 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
   tasks = selected_tasks
   update_interval = main_cfg.get('updateInterval', 60)
   htmlUpdated = False
+  previous_stat = None
 
 
   while True:
     last_update = datetime.datetime.now()
-    to_remove_output, to_post_process, to_run_locally, status = update(tasks, lawTaskManager,
-                                                                       main_cfg.get('maxNumberOfActiveCrabTasks', 100),
-                                                                       no_status_update=no_status_update)
+    to_remove_output, to_post_process, to_run_locally, stat = \
+      update(tasks, lawTaskManager, main_cfg.get('maxNumberOfActiveCrabTasks', 100),
+             no_status_update=no_status_update, previous_stat=previous_stat,
+             forceLocalThreshold=main_cfg.get('forceLocalThreshold', -1))
 
     status_path = os.path.join(work_area, 'status.json')
     with(open(status_path, 'w')) as f:
-      json.dump(status, f, indent=2)
+      json.dump(stat.status, f, indent=2)
+    previous_stat = stat
     htmlReportDest = main_cfg.get('htmlReport', '')
     if len(htmlReportDest) > 0:
       htmlReportDest = path_to_pfn(htmlReportDest)
