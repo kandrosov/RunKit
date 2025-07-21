@@ -165,6 +165,7 @@ def sanity_checks(task, forceLocalRun):
 
       job_runs = []
       for job_id, start_time in start_times.items():
+        if len(start_time) == 0: continue
         t = datetime.datetime.fromtimestamp(start_time[-1])
         delta_t = (now - t).total_seconds() / (60 * 60)
         job_runs.append([job_id, delta_t])
