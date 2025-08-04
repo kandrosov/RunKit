@@ -409,8 +409,8 @@ if __name__ == "__main__":
                     verbose=args.verbose)
 
   if processing_module:
-    module = processing_modules[processing_module]
-    if hasattr(module, 'OnSkimFinish'):
+    module = processing_modules.get(processing_module)
+    if module and hasattr(module, 'OnSkimFinish'):
       if args.verbose > 0:
         print(f"Running {processing_module}:OnSkimFinish() ...")
       module.OnSkimFinish()
