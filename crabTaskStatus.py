@@ -7,8 +7,8 @@ class Status(Enum):
   Defined = 0
   Submitted = 1
   SubmittedToLocal = 2
-  Bootstrapped = 3
-  TapeRecall = 4
+  TapeRecall = 3
+  Bootstrapped = 4
   InProgress = 5
   WaitingForRecovery = 6
   CrabFinished = 7
@@ -113,23 +113,24 @@ class LogEntryParser:
             break
         if not method_found:
           raise RuntimeError(f'Unknown log line {n} = "{log_lines[n]}".')
-      if task_status.status_on_server in [ StatusOnServer.QUEUED, StatusOnServer.NEW, StatusOnServer.WAITING ]:
-        task_status.status = Status.Submitted
-      if task_status.status_on_server == StatusOnServer.TAPERECALL:
-        task_status.status = Status.TapeRecall
-      if task_status.status_on_server == StatusOnServer.SUBMITTED:
-        task_status.status = Status.InProgress
-      if task_status.status_on_server == StatusOnServer.KILLED:
-        task_status.status = Status.WaitingForRecovery
-      if task_status.status_on_scheduler == StatusOnScheduler.WAITING_FOR_BOOTSTRAP:
-        task_status.status = Status.Submitted
-      if task_status.status_on_scheduler in [ StatusOnScheduler.FAILED, StatusOnScheduler.FAILED_KILLED ]:
-        task_status.status = Status.WaitingForRecovery
-      if task_status.status_on_scheduler == StatusOnScheduler.COMPLETED:
-        task_status.status = Status.CrabFinished
-      if task_status.status_on_server in [ StatusOnServer.SUBMITFAILED, StatusOnServer.RESUBMITFAILED,
-                                           StatusOnServer.KILLFAILED, StatusOnServer.SUBMITREFUSED ]:
-        task_status.status = Status.WaitingForRecovery
+      if task_status.status not in [ Status.Bootstrapped ]:
+        if task_status.status_on_server in [ StatusOnServer.QUEUED, StatusOnServer.NEW, StatusOnServer.WAITING ]:
+          task_status.status = Status.Submitted
+        if task_status.status_on_server == StatusOnServer.TAPERECALL:
+          task_status.status = Status.TapeRecall
+        if task_status.status_on_server == StatusOnServer.SUBMITTED:
+          task_status.status = Status.InProgress
+        if task_status.status_on_server == StatusOnServer.KILLED:
+          task_status.status = Status.WaitingForRecovery
+        if task_status.status_on_scheduler == StatusOnScheduler.WAITING_FOR_BOOTSTRAP:
+          task_status.status = Status.Submitted
+        if task_status.status_on_scheduler in [ StatusOnScheduler.FAILED, StatusOnScheduler.FAILED_KILLED ]:
+          task_status.status = Status.WaitingForRecovery
+        if task_status.status_on_scheduler == StatusOnScheduler.COMPLETED:
+          task_status.status = Status.CrabFinished
+        if task_status.status_on_server in [ StatusOnServer.SUBMITFAILED, StatusOnServer.RESUBMITFAILED,
+                                            StatusOnServer.KILLFAILED, StatusOnServer.SUBMITREFUSED ]:
+          task_status.status = Status.WaitingForRecovery
     except RuntimeError as e:
       task_status.status = Status.Unknown
       task_status.parse_error = str(e)
@@ -311,10 +312,19 @@ class LogEntryParser:
     return n + shift
 
   def task_bootstrapped(task_status, log_lines, n, value):
-    if n + 1 >= len(log_lines) or log_lines[n + 1].strip() != LogEntryParser.status_will_be_available:
+    bootstrap_message_parsed = False
+    next_line = None
+    if n + 1 < len(log_lines) and log_lines[n + 1].strip() == LogEntryParser.status_will_be_available:
+      bootstrap_message_parsed = True
+      next_line = n + 2
+    elif n + 2 < len(log_lines) and log_lines[n + 1].strip().startswith('Task bootstrapped') \
+        and log_lines[n + 2].strip() == LogEntryParser.status_not_available:
+      bootstrap_message_parsed = True
+      next_line = n + 3
+    if not bootstrap_message_parsed:
       raise RuntimeError("Unexpected bootstrap message")
     task_status.status = Status.Bootstrapped
-    return n + 2
+    return next_line
 
   def bootstrap_failed(task_status, log_lines, n, value):
     task_status.status_on_scheduler = StatusOnScheduler.FAILED
@@ -353,10 +363,11 @@ class LogEntryParser:
     "The task failed to bootstrap on the Grid scheduler": bootstrap_failed,
     "Rucio client intialized for account": "account",
     "Waiting for the Grid scheduler to bootstrap your task": waiting_for_bootstrap,
-    "Rucio client could not be intialized, some funcionalities may not work.": None,
+    "Rucio client could not be intialized, some funcionalities may not work": None,
   }
   error_summary_end = "Have a look at https://twiki.cern.ch/twiki/bin/viewauth/CMSPublic/JobExitCodes for a description of the exit codes."
   status_will_be_available = "Status information will be available within a few minutes"
+  status_not_available = "But no status info is available yet. If this persists report it to cmstalk+computing-tools@dovecotmta.cern.ch"
 
 class CrabTaskStatus:
   def __init__(self):
