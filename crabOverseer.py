@@ -18,7 +18,7 @@ from .crabTaskStatus import JobStatus, Status
 from .crabTask import Task
 from .crabLaw import LawTaskManager
 from .run_tools import PsCallError, ps_call, print_ts, timestamp_str, PrintOpt
-from .grid_tools import get_voms_proxy_info, gfal_copy_safe, path_to_pfn, gfal_rm, gfal_exists
+from .grid_tools import get_voms_proxy_info, gfal_copy_safe, gfal_ls_safe, path_to_pfn
 
 class TaskStat:
   summary_only_thr = 10
@@ -43,7 +43,7 @@ class TaskStat:
   def add(self, task):
     self.all_tasks.append(task)
 
-    useCacheOnly = task.taskStatus.status.value >= Status.CrabFinished.value
+    useCacheOnly = task.taskStatus.status.value >= Status.CrabFinished.value or task.taskStatus.status == Status.Defined
     n_files_total, n_files_processed, n_files_to_process, n_files_ignored = \
       task.getFilesStats(useCacheOnly=useCacheOnly)
     self.n_files_total += n_files_total
@@ -141,7 +141,7 @@ class TaskStat:
 def sanity_checks(task, forceLocalRun):
   abnormal_inactivity_thr = task.getMaxJobRuntime() + 1
 
-  if task.taskStatus.status in [ Status.InProgress, Status.Submitted ]:
+  if task.taskStatus.status in [ Status.InProgress, Status.Submitted, Status.Bootstrapped ]:
     if forceLocalRun:
       print(f'{task.name}: due to low number of remaining files to process, the tast will be killed and submitted'
              ' to the local queue, which is expected to be more efficient to "catching the tails".'
@@ -181,8 +181,35 @@ def sanity_checks(task, forceLocalRun):
 
   return True
 
-def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=False, previous_stat=None,
-           forceLocalThreshold=-1):
+def check_storage_usage(storageUsageLimits, vomsToken, verbose=1):
+  if verbose > 0:
+    print(f'Checking storage usage...')
+  all_ok = True
+  for item in storageUsageLimits:
+    if 'pfn' not in item:
+      item['pfn'] = path_to_pfn(item['path'])
+      item['root_pfn'] = os.path.dirname(item['pfn'])
+      item['name'] = os.path.basename(item['pfn'])
+      item['size'] = None
+    root_ls = gfal_ls_safe(item['root_pfn'], catch_stderr=True, voms_token=vomsToken, verbose=0)
+    item['size'] = None
+
+    for file in root_ls:
+      if file.name == item['name']:
+        item['size'] = file.size / 1024.0 ** 4
+        break
+    if item['size'] is None:
+      raise RuntimeError('Unable to get size of {item["path"]}')
+    ok = item['size'] < item['limit']
+    all_ok = all_ok and ok
+    ok_str = 'OK' if ok else 'FULL'
+    if verbose > 0:
+      print(f'\t{item["path"]}: status={ok_str} current_usage = {item["size"]:.2f} TB, limit = {item["limit"]:.2f} TB')
+  return all_ok
+
+def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=False, no_crab_submissions=False,
+           no_local_submissions=False, previous_stat=None, forceLocalThreshold=-1, storageUsageLimits=None,
+           maxFilesInActiveTasks=None, vomsToken=None):
   print_opt = PrintOpt(min_interval=60)
   print_opt("Updating...", force=True)
   stat = TaskStat()
@@ -194,6 +221,7 @@ def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=F
   n_tasks = len(tasks)
   forceLocalRun = previous_stat is not None and forceLocalThreshold > 0 \
                   and previous_stat.n_files_to_process < forceLocalThreshold
+  n_files_in_active_tasks = 0
   for task_idx, (task_name, task) in enumerate(tasks.items()):
     print_opt(f'Updated {task_idx} out of {n_tasks} tasks.')
     if task.taskStatus.status == Status.Defined:
@@ -240,6 +268,8 @@ def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=F
         task.taskStatus.status = Status.Finished
         task.saveStatus()
         print_opt(f'{task.name}: finished.', force=True)
+    if task.taskStatus.status.value > Status.Defined.value and task.taskStatus.status.value < Status.Finished.value:
+      n_files_in_active_tasks += len(task.getDatasetFiles())
 
   nActiveCrabTasks = 0
   for task_name, task in tasks.items():
@@ -247,12 +277,31 @@ def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=F
         and task.taskStatus.status.value > Status.Defined.value:
       nActiveCrabTasks += 1
   to_act = [ (task, 'recover') for task in to_recover ] + [ (task, 'submit') for task in to_submit ]
+  storage_ok = True
+  if storageUsageLimits:
+    storage_ok = check_storage_usage(storageUsageLimits, vomsToken)
+    if not storage_ok:
+      print("WARNING: storage usage limits are exceeded. No new tasks will be submitted.")
+  if maxFilesInActiveTasks:
+    if n_files_in_active_tasks >= maxFilesInActiveTasks:
+      print(f'WARNING: number of files in active tasks ({n_files_in_active_tasks}) exceeds the limit ({maxFilesInActiveTasks}).'
+            f' No new tasks will be submitted.')
+
   if len(to_act) > 0:
     print_ts(f"Applying submit/recover actions to {len(to_act)} tasks ...")
   for task, action in to_act:
-    allowCrabAction = nActiveCrabTasks < maxNumberOfActiveCrabTasks
+    if action == 'submit':
+      if not storage_ok:
+        continue
+      if maxFilesInActiveTasks:
+        n_files_exp = len(task.getFilesToProcess()) + n_files_in_active_tasks
+        if n_files_in_active_tasks > 0 and n_files_exp > maxFilesInActiveTasks:
+          continue
+    allowCrabAction = (not no_crab_submissions) and nActiveCrabTasks < maxNumberOfActiveCrabTasks
+    allowLocalAction = not no_local_submissions
     need_local_run, crab_task_submitted = getattr(task, action)(lawTaskManager=lawTaskManager,
                                                                 allowCrabAction=allowCrabAction,
+                                                                allowLocalAction=allowLocalAction,
                                                                 forceLocal=forceLocalRun)
     if need_local_run:
       to_run_locally.append(task)
@@ -513,7 +562,8 @@ def load_tasks(work_area, task_list_path, new_task_list_files, main_cfg, update_
 
 def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status_update=False,
                   update_cfg=False, no_loop=False, task_selection=None, task_selected_names=None,
-                  task_selected_status=None, action=None):
+                  task_selected_status=None, action=None, no_crab_submissions=False, no_local_submissions=False,
+                  assume_failed_files_are_valid=False):
   if not os.path.exists(work_area):
     os.makedirs(work_area)
   abs_work_area = os.path.abspath(work_area)
@@ -535,6 +585,7 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
   law_sub_dir = os.path.join(abs_work_area, 'law', 'jobs')
   law_task_dir = os.path.join(law_sub_dir, local_proc_params['lawTask'])
   law_jobs_cfg = os.path.join(law_task_dir, f'{local_proc_params["workflow"]}_jobs.json')
+  law_jobs_cfg_hist = os.path.join(law_task_dir, f'{local_proc_params["workflow"]}_jobs_hist.json')
 
   lawTaskManager = LawTaskManager(os.path.join(work_area, 'law_tasks.json'), law_task_dir=law_task_dir)
   vomsToken = get_voms_proxy_info()['path']
@@ -558,26 +609,35 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
       print_ts("Action is cancelled.")
     return
 
+  if assume_failed_files_are_valid:
+    for task_name, task in selected_tasks.items():
+      task.assume_failed_files_are_valid = True
+
   tasks = selected_tasks
   update_interval = main_cfg.get('updateInterval', 60)
-  htmlUpdated = False
   previous_stat = None
 
+  htmlUpdated = False
+  htmlReportDest = main_cfg.get('htmlReport', '')
+  if len(htmlReportDest) > 0:
+    htmlReportDest = path_to_pfn(htmlReportDest)
 
   while True:
     last_update = datetime.datetime.now()
     to_remove_output, to_post_process, to_run_locally, stat = \
       update(tasks, lawTaskManager, main_cfg.get('maxNumberOfActiveCrabTasks', 100),
-             no_status_update=no_status_update, previous_stat=previous_stat,
-             forceLocalThreshold=main_cfg.get('forceLocalThreshold', -1))
+             no_status_update=no_status_update, no_crab_submissions=no_crab_submissions,
+             no_local_submissions=no_local_submissions, previous_stat=previous_stat,
+             forceLocalThreshold=main_cfg.get('forceLocalThreshold', -1),
+             storageUsageLimits=main_cfg.get('storageUsageLimits', None),
+             maxFilesInActiveTasks=main_cfg.get('maxFilesInActiveTasks', None),
+             vomsToken=vomsToken)
 
     status_path = os.path.join(work_area, 'status.json')
     with(open(status_path, 'w')) as f:
       json.dump(stat.status, f, indent=2)
     previous_stat = stat
-    htmlReportDest = main_cfg.get('htmlReport', '')
     if len(htmlReportDest) > 0:
-      htmlReportDest = path_to_pfn(htmlReportDest)
       file_dir = os.path.dirname(os.path.abspath(__file__))
       filesToCopy = [ status_path ]
       if not htmlUpdated:
@@ -599,7 +659,7 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
         print_ts(f"Post-processing ({len(to_post_process)} tasks): " + ', '.join([ task.name for task in to_post_process ]))
       print_ts(f"Total number of jobs to run on a local grid: {len(lawTaskManager.cfg)}")
 
-      lawTaskManager.update_grid_jobs(law_jobs_cfg)
+
       n_cpus = local_proc_params.get('nCPU', 1)
       max_runime = local_proc_params.get('maxRuntime', 48.0)
       max_parallel_jobs = local_proc_params.get('maxParallelJobs', 1000)
@@ -618,6 +678,7 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
       ]
       if 'requirements' in local_proc_params:
         cmd.extend(['--requirements', local_proc_params['requirements']])
+      task_work_areas = None
       if len(all_tasks) != len(tasks):
         task_work_areas = []
         for task in to_remove_output + to_run_locally + to_post_process:
@@ -627,6 +688,8 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
           raise RuntimeError("No branches are selected for local processing.")
         branches_str = ','.join([ str(branch) for branch in selected_branches ])
         cmd.extend(['--branches', branches_str])
+      lawTaskManager.update_grid_jobs(law_jobs_cfg, task_work_areas=task_work_areas,
+                                      grid_jobs_file_history=law_jobs_cfg_hist)
       ps_call(cmd, verbose=1)
       print_ts("Local grid processing iteration finished.")
     has_unfinished = False
@@ -658,7 +721,12 @@ if __name__ == "__main__":
   parser.add_argument('--cfg', required=False, type=str, default=None, help="configuration file")
   parser.add_argument('--no-status-update', action="store_true", help="Do not update tasks statuses.")
   parser.add_argument('--update-cfg', action="store_true", help="Update task configs.")
+  parser.add_argument('--no-crab-submissions', action="store_true", help="Do not run crab (re-)submit commands.")
+  parser.add_argument('--no-local-submissions', action="store_true", help="Do not run local (re-)submit commands.")
   parser.add_argument('--no-loop', action="store_true", help="Run task update once and exit.")
+  parser.add_argument('--assume-failed-files-are-valid', action="store_true",
+                      help="Assume that previously failed files are valid. Possible usecase is when the previous"
+                           " failure was due to the known issue which has been fixed.")
   parser.add_argument('--select', required=False, type=str, default=None,
                       help="select tasks using python expression. Default: select all.")
   parser.add_argument('--select-names', required=False, type=str, default=None,
@@ -693,4 +761,6 @@ if __name__ == "__main__":
 
   overseer_main(args.work_area, args.cfg, args.task_file, verbose=args.verbose, no_status_update=args.no_status_update,
                 update_cfg=args.update_cfg, no_loop=args.no_loop, task_selection=args.select,
-                task_selected_names=selected_names, task_selected_status=selected_status, action=args.action)
+                task_selected_names=selected_names, task_selected_status=selected_status, action=args.action,
+                no_crab_submissions=args.no_crab_submissions, no_local_submissions=args.no_local_submissions,
+                assume_failed_files_are_valid=args.assume_failed_files_are_valid)

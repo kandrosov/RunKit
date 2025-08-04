@@ -369,7 +369,7 @@ class Task:
       if task_id is not None:
         self.taskIds[recoveryIndex] = task_id
         self.saveCfg()
-    return self.taskIds[recoveryIndex]
+    return self.taskIds.get(recoveryIndex)
 
   def postProcessOutputs(self, job_home):
     missingFiles = self.getFilesToProcess()
@@ -459,12 +459,17 @@ class Task:
   def lastCrabStatusLog(self):
     return os.path.join(self.workArea, 'lastCrabStatus.txt')
 
-  def submit(self, lawTaskManager=None, allowCrabAction=True, forceLocal=False):
+  def submit(self, lawTaskManager=None, allowCrabAction=True, allowLocalAction=True, forceLocal=False):
     self.getDatasetFiles()
-    self.checkOutputWriteAccess()
     if forceLocal:
       self.recoveryIndex = self.maxRecoveryCount
-    if self.isInLocalRunMode():
+    in_local_run_mode = self.isInLocalRunMode()
+    allow_action = (in_local_run_mode and allowLocalAction) or (not in_local_run_mode and allowCrabAction)
+    if allow_action:
+      self.checkOutputWriteAccess()
+    else:
+      return (False, False)
+    if in_local_run_mode:
       self.taskStatus = CrabTaskStatus()
       self.taskStatus.status = Status.SubmittedToLocal
       self.taskStatus.status_on_server = StatusOnServer.SUBMITTED
@@ -474,8 +479,6 @@ class Task:
       self.saveStatus()
       return (True, False)
     else:
-      if not allowCrabAction:
-        return (False, False)
       crabSubmitPath = os.path.join(os.path.dirname(__file__), 'crabSubmit.py')
       if self.recoveryIndex == 0:
         print(f'{self.name}: submitting ...')
@@ -544,7 +547,8 @@ class Task:
       self.saveStatus()
       if self.autoIgnoreCorrupt and self.taskStatus.status == Status.Failed:
         print(f'{self.name}: Some local jobs are failed. Checking for corrupt files (autoIgnoreCorrupt=True) ...')
-        self.checkFilesToProcess(lawTaskManager=lawTaskManager, resetStatus=True)
+        self.checkFilesToProcess(lawTaskManager=lawTaskManager, resetStatus=True,
+                                 assume_valid=getattr(self, 'assume_failed_files_are_valid', False))
         if self.taskStatus.status == Status.Failed:
           self.ignoreMissingFiles(lawTaskManager=lawTaskManager)
       neen_local_run = self.taskStatus.status not in [ Status.CrabFinished, Status.Failed ]
@@ -585,7 +589,7 @@ class Task:
       self.saveCfg()
     return neen_local_run
 
-  def recover(self, lawTaskManager=None, allowCrabAction=True, forceLocal=False):
+  def recover(self, lawTaskManager=None, allowCrabAction=True, allowLocalAction=True, forceLocal=False):
     filesToProcess = self.getFilesToProcess()
     if len(filesToProcess) == 0:
       print(f'{self.name}: no recovery is needed. All files have been processed.')
@@ -594,7 +598,12 @@ class Task:
       return (False, False)
 
     nextRecoveryIndex = self.maxRecoveryCount if forceLocal else self.recoveryIndex + 1
-    if self.isInLocalRunMode(recoveryIndex=nextRecoveryIndex):
+    in_local_run_mode = self.isInLocalRunMode(recoveryIndex=nextRecoveryIndex)
+    allow_action = (in_local_run_mode and allowLocalAction) or (not in_local_run_mode and allowCrabAction)
+    if not allow_action:
+      return (False, False)
+
+    if in_local_run_mode:
       print(f'{self.name}: creating a local recovery task\nFiles to process: ' + ', '.join(filesToProcess))
       if nextRecoveryIndex == self.maxRecoveryCount:
         shutil.copy(self.statusPath, os.path.join(self.workArea, f'status_{self.recoveryIndex}.json'))
@@ -605,15 +614,12 @@ class Task:
         self.submit(lawTaskManager=lawTaskManager)
       return (self.updateStatus(lawTaskManager=lawTaskManager), False)
 
-    if not allowCrabAction:
-      return (False, False)
-
     jobIds = self.selectJobIds([JobStatus.finished], invert=True)
     lumiMask = self.getRepresentativeLumiMask(filesToProcess)
     msg = f'{self.name}: creating a recovery task. Attempt {self.recoveryIndex + 1}/{self.maxRecoveryCount}.'
     msg += '\nUnfinished job ids: ' + ', '.join(jobIds)
     msg += '\nFiles to process: ' + ', '.join(filesToProcess)
-    msg += '\nRepresentative lumi mask: ' + json.dumps(lumiMask)
+    # msg += '\nRepresentative lumi mask: ' + json.dumps(lumiMask)
     print(msg)
     n_lumi = sum([ len(x) for _, x in lumiMask.items()])
     if n_lumi != len(filesToProcess):
@@ -835,7 +841,8 @@ class Task:
   def fileSourcesFile(self):
       return os.path.join(self.workArea, 'file_sources.json')
 
-  def checkFilesToProcess(self, lawTaskManager=None, resetStatus=False, force_update=False):
+  def checkFilesToProcess(self, lawTaskManager=None, resetStatus=False, force_update=False, assume_valid=False):
+    print(f'checkFilesToProcess: assume_valid={assume_valid}, resetStatus={resetStatus}, force_update={force_update}')
     filesToProcess = self.getFilesToProcess()
     print(f'dataset={self.inputDataset}')
     tmp_dir = tempfile.mkdtemp(dir=os.environ.get('TMPDIR', '/tmp'))
@@ -846,10 +853,11 @@ class Task:
         file_sources = json.load(f)
     else:
       file_sources = {}
-    for file in filesToProcess:
+    nFilesToProcess = len(filesToProcess)
+    for file_idx, file in enumerate(filesToProcess):
       file_out = os.path.join(tmp_dir, os.path.basename(file))
       file_out_edm = file_out + '_edm.root'
-      print(f'  {file}')
+      print(f'  ({file_idx+1}/{nFilesToProcess}) {file}')
       sources = []
       if pfnsPrefix is not None:
         sources = [ pfnsPrefix + file ]
@@ -876,7 +884,9 @@ class Task:
           return False, 'edmCopyPickMerge failed'
         return True, 'OK'
 
+      has_file_sources_changes = False
       def findValidSource():
+        nonlocal has_file_sources_changes
         for pfn_type, pfn_list in sources.items():
           for pfn in pfn_list:
             if pfn not in file_sources.get(file, {}):
@@ -887,6 +897,7 @@ class Task:
               if file not in file_sources:
                 file_sources[file] = {}
               file_sources[file][pfn] = { 'valid': is_valid, 'msg': msg, 'pfn_type': pfn_type }
+              has_file_sources_changes = True
             is_valid = file_sources[file][pfn]['valid']
             msg = file_sources[file][pfn]['msg']
             print(f'    {pfn}: type={pfn_type} {msg}')
@@ -894,8 +905,11 @@ class Task:
               return pfn
         return None
 
-      valid_source = findValidSource()
-      if valid_source is not None and resetStatus:
+      is_file_valid = assume_valid or findValidSource() is not None
+      if has_file_sources_changes and len(file_sources) > 0:
+        with open(self.fileSourcesFile(), 'w') as f:
+          json.dump(file_sources, f, indent=2)
+      if is_file_valid and resetStatus:
         has_status_changes = True
         self.recoveryIndex = self.maxRecoveryCount
         self.resetGridJobs(file=file, lawTaskManager=lawTaskManager)
@@ -903,9 +917,6 @@ class Task:
     if has_status_changes:
       self.saveStatus()
       self.saveCfg()
-    if len(file_sources) > 0:
-      with open(self.fileSourcesFile(), 'w') as f:
-        json.dump(file_sources, f, indent=2)
 
   def ignoreMissingFiles(self, lawTaskManager=None):
     filesToProcess = self.getFilesToProcess()
@@ -936,15 +947,17 @@ class Task:
       return ok
 
     invalid_files = []
-    for input_file, entry in sorted(processedFiles.items(), key=lambda x: x[1]['id']):
+    n_processed = len(processedFiles)
+    for file_idx, (input_file, entry) in enumerate(sorted(processedFiles.items(), key=lambda x: x[1]['id'])):
       for output_file_name, output_file_path in entry['outputs'].items():
-        if not check_file(output_file_path):
+        if check_file(output_file_path):
+          result = "OK"
+        else:
+          result = "invalid"
           invalid_files.append(output_file_path)
-          print(f'  {output_file_path}: invalid')
           if resetStatus and gfal_exists(output_file_path, voms_token=self.getVomsToken()):
             gfal_rm(output_file_path, voms_token=self.getVomsToken())
-        else:
-          print(f'  {output_file_path}: OK')
+        print(f'  ({file_idx+1}/{n_processed}) {output_file_path}: {result}')
 
     all_ok = len(invalid_files) == 0
     if not all_ok:

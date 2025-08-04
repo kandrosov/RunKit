@@ -129,30 +129,56 @@ class LawTaskManager:
       self._save_safe(self.cfg_path, self.cfg)
       self.has_updates = False
 
-  def update_grid_jobs(self, grid_jobs_file):
+  def update_grid_jobs(self, grid_jobs_file, task_work_areas=None, grid_jobs_file_history=None):
     if not os.path.exists(grid_jobs_file):
       return
     with open(grid_jobs_file, 'r') as f:
       grid_jobs = json.load(f)
+    has_history_updates = False
+    if grid_jobs_file_history is not None and os.path.exists(grid_jobs_file_history):
+      with open(grid_jobs_file_history, 'r') as f:
+        grid_jobs_history = json.load(f)
+    else:
+      grid_jobs_history = {
+        "jobs": {}, "unsubmitted_jobs": {}, "attempts": {}, "dashboard_config": {}, "tasks_per_job": 1
+      }
+      has_history_updates = True
+    task_areas = None
+    if task_work_areas is not None:
+      task_areas = set(os.path.abspath(task_work_area) for task_work_area in task_work_areas)
     has_updates = False
     valid_jobs = set()
     for entry in self.cfg:
+      if task_areas is not None and entry['task_work_area'] not in task_areas:
+        continue
       branch_id = entry['branch_id']
       job_id = str(branch_id + 1)
       valid_jobs.add(job_id)
       if job_id not in grid_jobs["jobs"] and job_id not in grid_jobs["unsubmitted_jobs"]:
-        grid_jobs["unsubmitted_jobs"][job_id] = [  branch_id ]
-        has_updates = True
+        if not os.path.exists(entry['done_flag']):
+          if job_id in grid_jobs_history["jobs"]:
+            grid_jobs["jobs"][job_id] = grid_jobs_history["jobs"][job_id]
+            grid_jobs["attempts"][job_id] = grid_jobs_history["attempts"].get(job_id, 1)
+          else:
+            grid_jobs["unsubmitted_jobs"][job_id] = [ branch_id ]
+          has_updates = True
     for col in [ "jobs", "unsubmitted_jobs" ]:
       jobs_to_remove = []
       for job_id in grid_jobs[col]:
         if job_id not in valid_jobs:
           jobs_to_remove.append(job_id)
+        if job_id not in grid_jobs_history[col] or grid_jobs_history[col][job_id] != grid_jobs[col][job_id]:
+          grid_jobs_history[col][job_id] = grid_jobs[col][job_id]
+          if job_id in grid_jobs["attempts"]:
+            grid_jobs_history["attempts"][job_id] = grid_jobs["attempts"][job_id]
+          has_history_updates = True
       for job_id in jobs_to_remove:
         grid_jobs[col].pop(job_id)
         has_updates = True
     if has_updates:
       self._save_safe(grid_jobs_file, grid_jobs)
+    if grid_jobs_file_history is not None and has_history_updates:
+      self._save_safe(grid_jobs_file_history, grid_jobs_history)
 
 class ProdTask(HTCondorWorkflow, law.LocalWorkflow):
   work_area = luigi.Parameter()
@@ -207,7 +233,7 @@ class ProdTask(HTCondorWorkflow, law.LocalWorkflow):
       work_area, grid_job_id, done_flag, dependencies, failed_flag, ready_to_run = self.branch_data
       task = CrabTask.Load(workArea=work_area)
       if grid_job_id == -2:
-        if task.taskStatus.status == Status.PostProcessingFinished:
+        if task.taskStatus.status in [ Status.PostProcessingFinished, Status.Finished ]:
           task.removeCrabOutputs()
           self.output().touch()
       elif grid_job_id == -1:
@@ -254,7 +280,7 @@ class ProdTask(HTCondorWorkflow, law.LocalWorkflow):
     rlist, wlist, xlist = select.select([sys.stdin], [], [], 0.1)
     if rlist:
       termios.tcflush(sys.stdin, termios.TCIOFLUSH)
-      timeout = 10 # seconds
+      timeout = 120 # seconds
       print_ts('Input from terminal is detected. Press return to stop polling, otherwise polling will'
                f' continue in {timeout} seconds...')
       rlist, wlist, xlist = select.select([sys.stdin], [], [], timeout)
