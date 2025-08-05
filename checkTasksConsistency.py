@@ -76,6 +76,7 @@ def check_consistency_era(task_cfg_files, dataset_name_mask_mc=None, dataset_nam
         'inputDataset': inputDataset,
         'file': task_cfg_file,
         'isData': is_data,
+        'fromDAS': inputDataset.startswith('/'),
       }
       if task_name not in tasks_by_name:
         tasks_by_name[task_name] = []
@@ -96,8 +97,9 @@ def check_consistency_era(task_cfg_files, dataset_name_mask_mc=None, dataset_nam
         print(f'  file={task_entry["file"]} task={task_entry["name"]}')
       all_ok = False
     is_data = task_list[0]['isData']
+    from_das = task_list[0]['fromDAS']
     name_mask = dataset_name_mask_data if is_data else dataset_name_mask_mc
-    if name_mask is not None and len(name_mask) > 0:
+    if from_das and name_mask is not None and len(name_mask) > 0:
       if name_mask[0] == '^':
         mask_matched = re.match(name_mask, inputDataset)
       else:
