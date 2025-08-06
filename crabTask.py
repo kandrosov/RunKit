@@ -395,7 +395,8 @@ class Task:
         for fileName, fileDesc in processedFiles.items():
           x = fileDesc['outputs'][outputName]
           haddInputs[x] = fileName
-          haddFileRunLumi[x] = self.getFileRunLumi()[fileName]
+          if self.isInputFromDAS():
+            haddFileRunLumi[x] = self.getFileRunLumi()[fileName]
           f.write(x + '\n')
 
       hadd_report_path = os.path.join(job_home, 'merge_report.json')
@@ -413,15 +414,15 @@ class Task:
       report['outputs'] = {}
       for haddOutput, haddOutputDesc in hadd_report.items():
         inputList = haddOutputDesc['inputs']
+        report['outputs'][haddOutput] = { 'adler32sum': haddOutputDesc['adler32sum'],
+                                          'n_selected': haddOutputDesc['n_selected'],
+                                          'n_not_selected': haddOutputDesc['n_not_selected'],
+                                          'size': haddOutputDesc['size'],
+                                          'n_selected_original': haddOutputDesc['n_selected_original'],
+                                          'n_not_selected_original': haddOutputDesc['n_not_selected_original'],
+                                          'size_original': haddOutputDesc['size_original'],
+                                          'inputs': {} }
         if self.isInputFromDAS():
-          report['outputs'][haddOutput] = { 'adler32sum': haddOutputDesc['adler32sum'],
-                                            'n_selected': haddOutputDesc['n_selected'],
-                                            'n_not_selected': haddOutputDesc['n_not_selected'],
-                                            'size': haddOutputDesc['size'],
-                                            'n_selected_original': haddOutputDesc['n_selected_original'],
-                                            'n_not_selected_original': haddOutputDesc['n_not_selected_original'],
-                                            'size_original': haddOutputDesc['size_original'],
-                                            'inputs': {} }
           for haddInput in inputList:
             origInput = haddInputs[haddInput]
             report['outputs'][haddOutput]['inputs'][origInput] = self.getFileRunLumi()[origInput]

@@ -222,6 +222,8 @@ def gfal_check_write(path, return_exception=False, voms_token=None, verbose=0):
   tmp_local_file = create_tmp_local_file()
   result = (True, None)
   try:
+    if gfal_exists(target_path, voms_token=voms_token):
+      gfal_rm(target_path, voms_token=voms_token, recursive=False)
     gfal_copy(tmp_local_file, target_path, voms_token=voms_token, verbose=verbose)
     gfal_rm(target_path, voms_token=voms_token, verbose=verbose)
   except GfalError as e:
