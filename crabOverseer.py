@@ -18,7 +18,7 @@ from .crabTaskStatus import JobStatus, Status
 from .crabTask import Task
 from .crabLaw import LawTaskManager
 from .run_tools import PsCallError, ps_call, print_ts, timestamp_str, PrintOpt
-from .grid_tools import get_voms_proxy_info, gfal_copy_safe, gfal_ls_safe, path_to_pfn
+from .grid_tools import get_voms_proxy_info, gfal_copy_safe, gfal_ls_safe, gfal_exists, path_to_pfn
 
 class TaskStat:
   summary_only_thr = 10
@@ -191,7 +191,9 @@ def check_storage_usage(storageUsageLimits, vomsToken, verbose=1):
       item['root_pfn'] = os.path.dirname(item['pfn'])
       item['name'] = os.path.basename(item['pfn'])
       item['size'] = None
-    root_ls = gfal_ls_safe(item['root_pfn'], catch_stderr=True, voms_token=vomsToken, verbose=0)
+
+    root_ls = gfal_ls_safe(item['root_pfn'], catch_stderr=True, voms_token=vomsToken, verbose=0) \
+              if gfal_exists(item['root_pfn'], voms_token=vomsToken) else []
     item['size'] = None
 
     for file in root_ls:
@@ -199,7 +201,7 @@ def check_storage_usage(storageUsageLimits, vomsToken, verbose=1):
         item['size'] = file.size / 1024.0 ** 4
         break
     if item['size'] is None:
-      raise RuntimeError('Unable to get size of {item["path"]}')
+      item['size'] = 0
     ok = item['size'] < item['limit']
     all_ok = all_ok and ok
     ok_str = 'OK' if ok else 'FULL'
@@ -290,13 +292,16 @@ def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=F
   if len(to_act) > 0:
     print_ts(f"Applying submit/recover actions to {len(to_act)} tasks ...")
   for task, action in to_act:
+    n_task_files = len(task.getFilesToProcess())
     if action == 'submit':
       if not storage_ok:
         continue
       if maxFilesInActiveTasks:
-        n_files_exp = len(task.getFilesToProcess()) + n_files_in_active_tasks
+        n_files_exp = n_task_files + n_files_in_active_tasks
         if n_files_in_active_tasks > 0 and n_files_exp > maxFilesInActiveTasks:
           continue
+    is_active_before_action = task.taskStatus.status.value > Status.Defined.value \
+                              and task.taskStatus.status.value < Status.Finished.value
     allowCrabAction = (not no_crab_submissions) and nActiveCrabTasks < maxNumberOfActiveCrabTasks
     allowLocalAction = not no_local_submissions
     need_local_run, crab_task_submitted = getattr(task, action)(lawTaskManager=lawTaskManager,
@@ -307,6 +312,10 @@ def update(tasks, lawTaskManager, maxNumberOfActiveCrabTasks, no_status_update=F
       to_run_locally.append(task)
     if crab_task_submitted:
       nActiveCrabTasks += 1
+    is_active = task.taskStatus.status.value > Status.Defined.value \
+                and task.taskStatus.status.value < Status.Finished.value
+    if not is_active_before_action and is_active:
+        n_files_in_active_tasks += len(task.getDatasetFiles())
   if nActiveCrabTasks >= maxNumberOfActiveCrabTasks:
     print(f'No new crab tasks will be submitted before the number of active crab tasks decreases below {maxNumberOfActiveCrabTasks}.'
           f' The current number of active crab tasks = {nActiveCrabTasks}.')
@@ -461,6 +470,51 @@ class ActionCleanLawJobs(Action):
     else:
       print("No branches to remove.")
 
+class ActionListActiveLocalJobs(Action):
+  def apply(self, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
+    if not os.path.exists(lawTaskManager.grid_jobs_file):
+      print(f'Law jobs file {lawTaskManager.grid_jobs_file} does not exist.')
+      return
+    with open(lawTaskManager.grid_jobs_file, 'r') as f:
+      grid_jobs = json.load(f)
+    active_jobs = {}
+    task_work_areas = {}
+    for task_name, task in tasks.items():
+      task_work_areas[os.path.abspath(task.workArea)] = task_name
+    grid_job_ids = set()
+    for job_id, job_entry in grid_jobs["jobs"].items():
+      if job_entry["status"] == "running":
+        branch_id = job_entry["branches"][0]
+        task_entry = lawTaskManager.find_by_branch_id(branch_id)
+        task_work_area = task_entry["task_work_area"] if task_entry else None
+        task_name = task_work_areas.get(task_work_area, "Unknown")
+        if task_name not in active_jobs:
+          active_jobs[task_name] = []
+        task_grid_job_id = task_entry['task_grid_job_id'] if task_entry else "NaN"
+        task = tasks.get(task_name, None)
+        task_grid_jobs = task.getGridJobs() if task else {}
+        valid_grid_job = task_grid_job_id in task_grid_jobs
+        input_files = task_grid_jobs[task_grid_job_id] if valid_grid_job else []
+        grid_job_ids.add(job_entry["job_id"])
+        entry = {
+          'law_job_id': job_id,
+          'grid_job_id': job_entry["job_id"],
+          'branch_id': branch_id,
+          'task_grid_job_id': task_grid_job_id,
+          'input_files': input_files,
+          'is_valid': valid_grid_job,
+        }
+        active_jobs[task_name].append(entry)
+
+    for task_name, job_entries in active_jobs.items():
+      print(f'{task_name}: {len(job_entries)} active local jobs')
+      for job_entry in job_entries:
+        print(f'  law_job_id={job_entry["law_job_id"]} grid_job_id={job_entry["grid_job_id"]}'
+              f' branch_id={job_entry["branch_id"]} task_grid_job_id={job_entry["task_grid_job_id"]}'
+              f' is_valid={job_entry["is_valid"]}')
+        for file in job_entry["input_files"]:
+          print(f'    input_file={file}')
+    print(f'All grid job ids: {" ".join(grid_job_ids)}')
 
 class ActionFactory:
   known_actions = OrderedDict([
@@ -480,6 +534,7 @@ class ActionFactory:
     ('kill', (ActionKill, 'send kill request for selected tasks')),
     ('remove', (ActionRemove, 'remove selected tasks')),
     ('clean_law_jobs', (ActionCleanLawJobs, 'clean law jobs for which tasks no longer exist')),
+    ('list_active_local_jobs', (ActionListActiveLocalJobs, 'list jobs that are currently running on the local grid')),
   ])
 
   @staticmethod
@@ -583,11 +638,7 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
 
   local_proc_params = main_cfg['localProcessing']
   law_sub_dir = os.path.join(abs_work_area, 'law', 'jobs')
-  law_task_dir = os.path.join(law_sub_dir, local_proc_params['lawTask'])
-  law_jobs_cfg = os.path.join(law_task_dir, f'{local_proc_params["workflow"]}_jobs.json')
-  law_jobs_cfg_hist = os.path.join(law_task_dir, f'{local_proc_params["workflow"]}_jobs_hist.json')
-
-  lawTaskManager = LawTaskManager(os.path.join(work_area, 'law_tasks.json'), law_task_dir=law_task_dir)
+  lawTaskManager = LawTaskManager(os.path.join(work_area, 'law_tasks.json'), law_sub_dir, main_cfg['localProcessing'])
   vomsToken = get_voms_proxy_info()['path']
 
   for name, task in selected_tasks.items():
@@ -659,38 +710,8 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
         print_ts(f"Post-processing ({len(to_post_process)} tasks): " + ', '.join([ task.name for task in to_post_process ]))
       print_ts(f"Total number of jobs to run on a local grid: {len(lawTaskManager.cfg)}")
 
-
-      n_cpus = local_proc_params.get('nCPU', 1)
-      max_runime = local_proc_params.get('maxRuntime', 48.0)
-      max_parallel_jobs = local_proc_params.get('maxParallelJobs', 1000)
-      stop_date = last_update + datetime.timedelta(minutes=update_interval)
-      stop_date_str = stop_date.strftime('%Y-%m-%dT%H%M%S')
-      cmd = [ 'law', 'run', local_proc_params['lawTask'],
-              '--workflow', local_proc_params['workflow'],
-              '--bootstrap-path', local_proc_params['bootstrap'],
-              '--work-area', abs_work_area,
-              '--sub-dir', law_sub_dir,
-              '--n-cpus', str(n_cpus),
-              '--max-runtime', str(max_runime),
-              '--parallel-jobs', str(max_parallel_jobs),
-              '--stop-date', stop_date_str,
-              '--transfer-logs',
-      ]
-      if 'requirements' in local_proc_params:
-        cmd.extend(['--requirements', local_proc_params['requirements']])
-      task_work_areas = None
-      if len(all_tasks) != len(tasks):
-        task_work_areas = []
-        for task in to_remove_output + to_run_locally + to_post_process:
-          task_work_areas.append(task.workArea)
-        selected_branches = lawTaskManager.select_branches(task_work_areas)
-        if len(selected_branches) == 0:
-          raise RuntimeError("No branches are selected for local processing.")
-        branches_str = ','.join([ str(branch) for branch in selected_branches ])
-        cmd.extend(['--branches', branches_str])
-      lawTaskManager.update_grid_jobs(law_jobs_cfg, task_work_areas=task_work_areas,
-                                      grid_jobs_file_history=law_jobs_cfg_hist)
-      ps_call(cmd, verbose=1)
+      lawTaskManager.run_law(abs_work_area, last_update, update_interval,
+                             to_remove_output + to_run_locally + to_post_process, len(all_tasks) != len(tasks))
       print_ts("Local grid processing iteration finished.")
     has_unfinished = False
     for task_name, task in tasks.items():

@@ -32,9 +32,14 @@ def update_kinit_thread():
   cond.release()
 
 class LawTaskManager:
-  def __init__(self, cfg_path, law_task_dir=None):
+  def __init__(self, cfg_path, law_dir=None, proc_params=None):
     self.cfg_path = cfg_path
-    self.law_task_dir = law_task_dir
+    self.law_dir = law_dir
+    self.proc_params = proc_params
+    if self.law_dir:
+      self.law_task_dir = os.path.join(self.law_dir, self.proc_params['lawTask'])
+      self.grid_jobs_file = os.path.join(self.law_task_dir, f'{self.proc_params["workflow"]}_jobs.json')
+      self.grid_jobs_file_history = os.path.join(self.law_task_dir, f'{self.proc_params["workflow"]}_jobs_hist.json')
     if os.path.exists(cfg_path):
       with open(cfg_path, 'r') as f:
         self.cfg = json.load(f)
@@ -67,6 +72,13 @@ class LawTaskManager:
     task_grid_job_id = int(task_grid_job_id)
     for entry in self.cfg:
       if entry['task_work_area'] == task_work_area and entry['task_grid_job_id'] == task_grid_job_id:
+        return entry
+    return None
+
+  def find_by_branch_id(self, branch_id):
+    branch_id = int(branch_id)
+    for entry in self.cfg:
+      if entry['branch_id'] == branch_id:
         return entry
     return None
 
@@ -129,14 +141,14 @@ class LawTaskManager:
       self._save_safe(self.cfg_path, self.cfg)
       self.has_updates = False
 
-  def update_grid_jobs(self, grid_jobs_file, task_work_areas=None, grid_jobs_file_history=None):
-    if not os.path.exists(grid_jobs_file):
+  def update_grid_jobs(self, task_work_areas=None):
+    if self.law_dir is None or not os.path.exists(self.grid_jobs_file):
       return
-    with open(grid_jobs_file, 'r') as f:
+    with open(self.grid_jobs_file, 'r') as f:
       grid_jobs = json.load(f)
     has_history_updates = False
-    if grid_jobs_file_history is not None and os.path.exists(grid_jobs_file_history):
-      with open(grid_jobs_file_history, 'r') as f:
+    if os.path.exists(self.grid_jobs_file_history):
+      with open(self.grid_jobs_file_history, 'r') as f:
         grid_jobs_history = json.load(f)
     else:
       grid_jobs_history = {
@@ -176,9 +188,41 @@ class LawTaskManager:
         grid_jobs[col].pop(job_id)
         has_updates = True
     if has_updates:
-      self._save_safe(grid_jobs_file, grid_jobs)
-    if grid_jobs_file_history is not None and has_history_updates:
-      self._save_safe(grid_jobs_file_history, grid_jobs_history)
+      self._save_safe(self.grid_jobs_file, grid_jobs)
+    if has_history_updates:
+      self._save_safe(self.grid_jobs_file_history, grid_jobs_history)
+
+  def run_law(self, work_area, last_update, update_interval, local_tasks, select_branches):
+    n_cpus = self.proc_params.get('nCPU', 1)
+    max_runime = self.proc_params.get('maxRuntime', 48.0)
+    max_parallel_jobs = self.proc_params.get('maxParallelJobs', 1000)
+    stop_date = last_update + datetime.timedelta(minutes=update_interval)
+    stop_date_str = stop_date.strftime('%Y-%m-%dT%H%M%S')
+    cmd = [ 'law', 'run', self.proc_params['lawTask'],
+            '--workflow', self.proc_params['workflow'],
+            '--bootstrap-path', self.proc_params['bootstrap'],
+            '--work-area', work_area,
+            '--sub-dir', self.law_dir,
+            '--n-cpus', str(n_cpus),
+            '--max-runtime', str(max_runime),
+            '--parallel-jobs', str(max_parallel_jobs),
+            '--stop-date', stop_date_str,
+            '--transfer-logs',
+    ]
+    if 'requirements' in self.proc_params:
+      cmd.extend(['--requirements', self.proc_params['requirements']])
+    task_work_areas = None
+    if select_branches:
+      task_work_areas = []
+      for task in local_tasks:
+        task_work_areas.append(task.workArea)
+      selected_branches = self.select_branches(task_work_areas)
+      if len(selected_branches) == 0:
+        raise RuntimeError("No branches are selected for local processing.")
+      branches_str = ','.join([ str(branch) for branch in selected_branches ])
+      cmd.extend(['--branches', branches_str])
+    self.update_grid_jobs(task_work_areas=task_work_areas)
+    ps_call(cmd, verbose=1)
 
 class ProdTask(HTCondorWorkflow, law.LocalWorkflow):
   work_area = luigi.Parameter()
@@ -277,6 +321,7 @@ class ProdTask(HTCondorWorkflow, law.LocalWorkflow):
 
   def poll_callback(self, poll_data):
     update_kinit(verbose=0)
+    self.poll_counter = getattr(self, 'poll_counter', 0) + 1
     rlist, wlist, xlist = select.select([sys.stdin], [], [], 0.1)
     if rlist:
       termios.tcflush(sys.stdin, termios.TCIOFLUSH)
@@ -288,7 +333,7 @@ class ProdTask(HTCondorWorkflow, law.LocalWorkflow):
         termios.tcflush(sys.stdin, termios.TCIOFLUSH)
         return False
       print_ts(f'Polling resumed')
-    return datetime.datetime.now() < self.stop_date
+    return self.poll_counter <= 1 or datetime.datetime.now() < self.stop_date
 
   def control_output_postfix(self):
     return ""
