@@ -12,7 +12,7 @@ if __name__ == "__main__":
   __package__ = 'RunKit'
 
 from .run_tools import print_ts, ps_call, natural_sort
-from .grid_tools import get_voms_proxy_info, gfal_copy_safe, lfn_to_pfn, gfal_exists
+from .grid_tools import get_voms_proxy_info, gfal_copy_safe, lfn_to_pfn, gfal_exists, gfal_rm
 
 def load_config(cfg_file, era):
   with open(cfg_file) as f:
@@ -185,7 +185,7 @@ def find_dataset_report(cfg, era, task_name, prod_report_file, voms_token):
       return task_report_path, False, output
   return None, False, None
 
-def check_consistency(cfg, datasets_info):
+def check_consistency(cfg, datasets_info, not_defined_datasets):
   all_ok = True
   datasets_by_name = {}
   datasets_by_path = {}
@@ -215,13 +215,12 @@ def check_consistency(cfg, datasets_info):
     return False
 
   datasets_by_name = { name: next(iter(paths)) for name, paths in datasets_by_name.items() }
-
   for name, dataset in datasets_by_name.items():
-    if name in cfg['tasks'] and dataset == cfg['tasks'][name]['dataset']:
+    name_found = name in cfg['tasks']
+    if name_found and dataset == cfg['tasks'][name]['dataset']:
       continue
     all_ok = False
     dataset_found = dataset in cfg['datasets']
-    name_found = name in cfg['tasks']
     if dataset_found:
       print(f'ERROR: deployed name != production name for dataset={dataset}:')
       print(f' {name} != {cfg["datasets"][dataset]}')
@@ -230,10 +229,11 @@ def check_consistency(cfg, datasets_info):
       print(f' {dataset} != {cfg["tasks"][name]["dataset"]}')
     if not name_found and not dataset_found:
       print(f'ERROR: deployed name={name} dataset={dataset}" is not defined in the production configuration.')
+      not_defined_datasets.add(name)
 
   return all_ok
 
-def deploy_prod_results(cfg_file, era, dry_run=False, check_only=False, output_missing=None):
+def deploy_prod_results(cfg_file, era, dry_run=False, check_only=False, output_missing=None, remove_not_defined=False):
   cfg = load_config(cfg_file, era)
   if len(cfg['datasets']) == 0:
     raise RuntimeError(f'No datasets are found for era="{era}".')
@@ -251,8 +251,39 @@ def deploy_prod_results(cfg_file, era, dry_run=False, check_only=False, output_m
   with open(datasets_tmp) as f:
     datasets_info = json.load(f)
 
-  if not check_consistency(cfg, datasets_info):
-    raise RuntimeError(f'Inconsistent datasets info in {datasets_json_path}.')
+  not_defined_datasets = set()
+  if not check_consistency(cfg, datasets_info, not_defined_datasets):
+    if remove_not_defined and len(not_defined_datasets) > 0:
+      dry_run_str = ' (dry run)' if dry_run else ''
+
+      print(f'Removing {len(not_defined_datasets)} not defined datasets {dry_run_str}:'
+            f'{" ".join(not_defined_datasets)}')
+      files_to_remove = []
+      new_datasets = []
+      for dataset in datasets_info['datasets']:
+        if dataset['name'] in not_defined_datasets:
+          full_name = dataset['full_name']
+          files_to_remove.extend([ f'{full_name}_size.html', f'{full_name}_doc.html', f'{full_name}_report.json' ])
+        else:
+          new_datasets.append(dataset)
+      print(f'Replacing dataset info{dry_run_str}: old datasets count = {len(datasets_info["datasets"])},'
+            f' new datasets count = {len(new_datasets)}')
+      datasets_info['datasets'] = new_datasets
+      if not dry_run:
+        with open(datasets_tmp, 'w') as f:
+          json.dump(datasets_info, f, indent=2)
+        copy_info_files(os.path.join(cfg['info'], era), [ datasets_tmp ], voms_token)
+      for file in files_to_remove:
+        file_path = os.path.join(cfg['info'], era, file)
+        if gfal_exists(file_path, voms_token=voms_token):
+          print(f'Removing {file_path}{dry_run_str}...')
+          if not dry_run:
+            gfal_rm(file_path, voms_token=voms_token, verbose=0)
+        else:
+          print(f'File {file_path} does not exist, skipping removal.')
+    else:
+      raise RuntimeError(f'Inconsistent datasets info in {datasets_json_path}.')
+    return
   if check_only:
     return
 
@@ -347,6 +378,9 @@ if __name__ == "__main__":
                       help="file to store the list of missing datasets")
   parser.add_argument('--dry-run', action="store_true", help="Do not perform actions.")
   parser.add_argument('--check-only', action="store_true", help="Run only consistency checks.")
+  parser.add_argument('--remove-not-defined', action="store_true",
+                      help="Remove datasets that are not defined in the production configuration.")
   args = parser.parse_args()
 
-  deploy_prod_results(args.cfg, args.era, args.dry_run, args.check_only, args.output_missing)
+  deploy_prod_results(args.cfg, args.era, dry_run=args.dry_run, check_only=args.check_only,
+                      output_missing=args.output_missing, remove_not_defined=args.remove_not_defined)
