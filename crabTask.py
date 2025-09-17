@@ -549,7 +549,8 @@ class Task:
       if self.autoIgnoreCorrupt and self.taskStatus.status == Status.Failed:
         print(f'{self.name}: Some local jobs are failed. Checking for corrupt files (autoIgnoreCorrupt=True) ...')
         self.checkFilesToProcess(lawTaskManager=lawTaskManager, resetStatus=True,
-                                 assume_valid=getattr(self, 'assume_failed_files_are_valid', False))
+                                 assume_valid=getattr(self, 'assume_failed_files_are_valid', False),
+                                 add_invalid_to_ignore_list=True)
         if self.taskStatus.status == Status.Failed:
           self.ignoreMissingFiles(lawTaskManager=lawTaskManager)
       neen_local_run = self.taskStatus.status not in [ Status.CrabFinished, Status.Failed ]
@@ -842,13 +843,17 @@ class Task:
   def fileSourcesFile(self):
       return os.path.join(self.workArea, 'file_sources.json')
 
-  def checkFilesToProcess(self, lawTaskManager=None, resetStatus=False, force_update=False, assume_valid=False):
-    print(f'checkFilesToProcess: assume_valid={assume_valid}, resetStatus={resetStatus}, force_update={force_update}')
+  def checkFilesToProcess(self, lawTaskManager=None, resetStatus=False, force_update=False, assume_valid=False,
+                          try_to_copy=True, try_to_read=True, add_invalid_to_ignore_list=False):
+    print(f'checkFilesToProcess: assume_valid={assume_valid}, resetStatus={resetStatus}, force_update={force_update}'
+          f' try_to_copy={try_to_copy}, try_to_read={try_to_read}'
+          f' add_invalid_to_ignore_list={add_invalid_to_ignore_list}')
     filesToProcess = self.getFilesToProcess()
     print(f'dataset={self.inputDataset}')
     tmp_dir = tempfile.mkdtemp(dir=os.environ.get('TMPDIR', '/tmp'))
     pfnsPrefix = self.params.get('inputPFNSprefix', None)
     has_status_changes = False
+    has_config_changes = False
     if not force_update and os.path.exists(self.fileSourcesFile()):
       with open(self.fileSourcesFile(), 'r') as f:
         file_sources = json.load(f)
@@ -869,6 +874,8 @@ class Task:
       def isValidSource(pfn_type, pfn):
         if pfn_type == 'TAPE':
           return False, 'no user access'
+        if not try_to_copy:
+          return True, 'OK (no copy test)'
         try:
           gfal_copy(pfn, file_out, voms_token=self.getVomsToken(), verbose=0)
         except GfalError as e:
@@ -877,6 +884,8 @@ class Task:
           asum = adler32sum(file_out)
           if asum != expected_adler32sum:
             return False, f'adler32sum mismatch. Expected = {expected_adler32sum:x}, got = {asum:x}.'
+        if not try_to_read:
+          return True, 'OK (no read test)'
         try:
           ps_call([ 'edmCopyPickMerge', f'inputFiles=file:{file_out}', f'outputFile={file_out_edm}' ],
                   catch_stderr=True, catch_stdout=True, verbose=0, env=self.getCmsswEnv(),
@@ -910,13 +919,21 @@ class Task:
       if has_file_sources_changes and len(file_sources) > 0:
         with open(self.fileSourcesFile(), 'w') as f:
           json.dump(file_sources, f, indent=2)
+      if not is_file_valid and add_invalid_to_ignore_list:
+        invalid_files = set(self.ignoreFiles)
+        invalid_files.add(file)
+        self.ignoreFiles = sorted(list(invalid_files))
+        has_config_changes = True
+        self.saveCfg()
       if is_file_valid and resetStatus:
         has_status_changes = True
+        has_config_changes = True
         self.recoveryIndex = self.maxRecoveryCount
         self.resetGridJobs(file=file, lawTaskManager=lawTaskManager)
         self.taskStatus.status = Status.SubmittedToLocal
     if has_status_changes:
       self.saveStatus()
+    if has_config_changes:
       self.saveCfg()
 
   def ignoreMissingFiles(self, lawTaskManager=None):

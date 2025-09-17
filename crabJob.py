@@ -189,6 +189,7 @@ def runJob(cmd_line_args):
   else:
     datasetFiles = None
 
+  print(f'datasetFiles: {cfg_params.datasetFiles}')
   has_at_least_one_success = False
   for file_index, file in enumerate(list(PSet.process.source.fileNames)):
     if cfg_params.maxFiles > 0 and file_index >= cfg_params.maxFiles:

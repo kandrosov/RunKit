@@ -18,7 +18,7 @@ from .crabTaskStatus import JobStatus, Status
 from .crabTask import Task
 from .crabLaw import LawTaskManager
 from .run_tools import PsCallError, ps_call, print_ts, timestamp_str, PrintOpt
-from .grid_tools import get_voms_proxy_info, gfal_copy_safe, gfal_ls_safe, gfal_exists, path_to_pfn
+from .grid_tools import get_voms_proxy_info, gfal_copy_safe, gfal_ls_safe, gfal_exists, path_to_pfn, run_dasgoclient
 
 class TaskStat:
   summary_only_thr = 10
@@ -367,12 +367,65 @@ class ActionRunCmd(Action):
       task.saveCfg()
       task.saveStatus()
 
+class ActionSetStatus(Action):
+  def apply(self, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
+    status_str = self.args
+    try:
+      status = Status[status_str]
+    except KeyError:
+      raise RuntimeError(f'Invalid status: {status_str}')
+    for task_name, task in selected_tasks.items():
+      print(f'{task.name}: setting status to {status.name}')
+      task.taskStatus.status = status
+      task.saveCfg()
+      task.saveStatus()
+
 class ActionListFilesToProcess(Action):
   def apply(self, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
     for task_name, task in selected_tasks.items():
       print(f'{task.name}: files to process')
       for file in task.getFilesToProcess():
         print(f'  {file}')
+
+class ActionExcludeNotAvailableFiles(Action):
+  def apply(self, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
+    for task_name, task in selected_tasks.items():
+      if not task.isInputFromDAS():
+        print(f'{task_name}: input dataset is not from DAS. Skipping.')
+        continue
+
+
+      files_to_process = set(task.getFilesToProcess())
+      files_to_ignore = set(task.ignoreFiles)
+      if len(files_to_process) == 0: continue
+      print(f'{task_name}: checking files availability...')
+      available_files = set()
+      sites_das = run_dasgoclient(f'site dataset={task.inputDataset}', inputDBS=task.inputDBS, json_output=True,
+                                  verbose=0)
+      for site_info in sites_das:
+        if len(site_info["site"]) != 1:
+          raise RuntimeError(f"Invalid site info: {site_info}")
+        site_name = site_info["site"][0]["name"]
+        site_kind = site_info["site"][0]["kind"]
+        site_nfiles = site_info["site"][0]["nfiles"]
+        print(f'  {site_name}: kind={site_kind} nfiles={site_nfiles}')
+        if site_kind == 'TAPE': continue
+        site_files = run_dasgoclient(f'file site={site_name} dataset={task.inputDataset}',
+                                     inputDBS=task.inputDBS, json_output=False, verbose=0)
+        if (len(site_files) != site_nfiles):
+          print(f"site_files ({len(site_files)}): {site_files}")
+          raise RuntimeError(f"Number of files from DAS ({len(site_files)}) does not match the expected number ({site_nfiles})")
+        available_files.update(site_files)
+      new_files_to_process = files_to_process & available_files
+      files_to_ignore.update(files_to_process - available_files)
+      if files_to_ignore != set(task.ignoreFiles):
+        diff = files_to_ignore - set(task.ignoreFiles)
+        print(f'{task_name}: {len(new_files_to_process)} of {len(files_to_process)} files marked for processing'
+              f' are available on user-accessible sites. Not available files ({len(diff)}) will be ignored.')
+        task.ignoreFiles = list(sorted(files_to_ignore))
+        task.saveCfg()
+      else:
+        print(f'{task_name}: all {len(files_to_process)} files marted for processing are available on user-accessible sites.')
 
 class ActionCheckFailed(Action):
   def apply(self, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
@@ -381,7 +434,8 @@ class ActionCheckFailed(Action):
     force_update = 'force' in self.name
     for task_name, task in selected_tasks.items():
       if task.taskStatus.status == Status.Failed:
-        task.checkFilesToProcess(lawTaskManager=lawTaskManager, resetStatus=resetStatus, force_update=force_update)
+        task.checkFilesToProcess(lawTaskManager=lawTaskManager, resetStatus=resetStatus, force_update=force_update,
+                                 add_invalid_to_ignore_list=resetStatus)
     if resetStatus:
       lawTaskManager.save()
 
@@ -521,7 +575,9 @@ class ActionFactory:
     ('help', (ActionHelp, 'print list of available actions')),
     ('print', (ActionPrint, 'print the status of selected tasks')),
     ('run_cmd', (ActionRunCmd, 'run a command in form of a python code for each selected task')),
+    ('set_status', (ActionSetStatus, 'manually set status for selected tasks. Argument: new status')),
     ('list_files_to_process', (ActionListFilesToProcess, 'list files to process for selected tasks')),
+    ('exclude_not_available_files', (ActionExcludeNotAvailableFiles, 'exclude files for which there are no copies on user-accessible sites')),
     ('check_failed', (ActionCheckFailed, 'check files availability for failed tasks')),
     ('check_update_failed', (ActionCheckFailed, 'check files availability for failed tasks and update status, if some files are available')),
     ('force_check_failed', (ActionCheckFailed, 'remove the cache and check files availability for failed tasks')),
@@ -712,6 +768,7 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
 
       lawTaskManager.run_law(abs_work_area, last_update, update_interval,
                              to_remove_output + to_run_locally + to_post_process, len(all_tasks) != len(tasks))
+      lawTaskManager.clean_logs(local_proc_params.get('maxNumberOfJobLogs', -1))
       print_ts("Local grid processing iteration finished.")
     has_unfinished = False
     for task_name, task in tasks.items():

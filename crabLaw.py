@@ -4,12 +4,14 @@ import json
 import law
 import luigi
 import os
+import pathlib
 import select
 import shutil
 import sys
 import tempfile
 import termios
 import threading
+
 
 from .law_customizations import HTCondorWorkflow
 from .crabTask import Task as CrabTask
@@ -223,6 +225,22 @@ class LawTaskManager:
       cmd.extend(['--branches', branches_str])
     self.update_grid_jobs(task_work_areas=task_work_areas)
     ps_call(cmd, verbose=1)
+
+  def clean_logs(self, max_n_logs):
+    if max_n_logs < 0:
+      raise ValueError("max_n_logs must be non-negative.")
+
+    log_path = pathlib.Path(self.law_task_dir)
+    if not log_path.exists() or not log_path.is_dir():
+      return
+    txt_files = list(log_path.glob('*.txt'))
+    if len(txt_files) > max_n_logs:
+      print(f"Cleaning up logs in {log_path}. Current number of logs = {len(txt_files)}."
+            f"Keeping the most recent {max_n_logs} files...")
+      txt_files.sort(key=lambda p: p.stat().st_mtime)
+      for file_path in txt_files[:-max_n_logs]:
+        file_path.unlink()
+      print("Log cleanup done.")
 
 class ProdTask(HTCondorWorkflow, law.LocalWorkflow):
   work_area = luigi.Parameter()
