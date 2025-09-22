@@ -458,20 +458,28 @@ class ActionCheckProcessed(Action):
 
 class ActionResetLocalJobs(Action):
   def apply(self, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
+    task_work_areas = []
+    for task in tasks.values():
+      task_work_areas.append(task.workArea)
     for task_name, task in selected_tasks.items():
+      print(f'{task.name}: resetting local jobs...')
+      task.gridJobs = None
+      for file in [ task.gridJobsFile(), task.getGridJobDoneFlagDir() ]:
+        if os.path.exists(file):
+          if os.path.isfile(file):
+            os.remove(file)
+          else:
+            shutil.rmtree(file)
+
       if task.taskStatus.status in [ Status.Failed, Status.SubmittedToLocal ]:
-        print(f'{task.name}: resetting local jobs...')
-        task.gridJobs = None
-        for file in [ task.gridJobsFile(), task.getGridJobDoneFlagDir() ]:
-          if os.path.exists(file):
-            if os.path.isfile(file):
-              os.remove(file)
-            else:
-              shutil.rmtree(file)
         task.recoveryIndex = task.maxRecoveryCount
-        task.taskStatus.status = Status.SubmittedToLocal
+        task.taskStatus.status = Status.WaitingForRecovery
         task.saveStatus()
         task.saveCfg()
+      task_work_areas.remove(task.workArea)
+    lawTaskManager.clean_branches(task_work_areas)
+    lawTaskManager.update_grid_jobs()
+    lawTaskManager.save()
 
 class ActionRemoveCrabOutput(Action):
   def apply(self, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
