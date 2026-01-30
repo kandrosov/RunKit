@@ -14,15 +14,19 @@ from law.logger import get_logger
 logger = get_logger(__name__)
 
 from .law_gfal import GFALFileInterface
+from .law_das import DASFileInterface
 from .grid_tools import path_to_pfn
 
 
 class WLCGFileSystem(RemoteFileSystem):
   def __init__(self, base, ls_cache_validity_period=60):
-    if type(base) is str:
-      base = [base]
-    base_pfns = [path_to_pfn(b) for b in base]
-    file_interface = GFALFileInterface(base_pfns)
+    if base == "DAS":
+      file_interface = DASFileInterface()
+    else:
+      if type(base) is str:
+        base = [base]
+      base_pfns = [path_to_pfn(b) for b in base]
+      file_interface = GFALFileInterface(base_pfns)
     super(WLCGFileSystem, self).__init__(file_interface)
 
 class WLCGTarget(RemoteTarget):
