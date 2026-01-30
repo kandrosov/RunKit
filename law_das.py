@@ -28,7 +28,7 @@ class DASFileInterface(RemoteFileInterface):
     if not (not src_local and dst_local):
       raise RuntimeError("DASFileInterface: only copy from remote to local is supported")
     dst_path = dst[len(DASFileInterface.local_prefix):]
-    copy_remote_file(src, dst_path)
+    copy_remote_file(src, dst_path, voms_token=self.voms_token)
     return src, dst
 
   def listdir(self, path, base=None, silent=False, **kwargs):
