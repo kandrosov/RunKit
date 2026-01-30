@@ -168,7 +168,7 @@ def gfal_copy(input_file, output_file, voms_token=None, number_of_streams=2, tim
     ps_call(cmd, shell=False, env=gfal_env(voms_token), verbose=verbose,
             catch_stdout=catch_output, catch_stderr=catch_output)
   except PsCallError as e:
-    raise GfalError(f'gfal_copy: unable to copy "{input_file}" to "{output_file}"\n{e}')
+    raise GfalError(f'gfal_copy: unable to copy "{input_file}" to "{output_file}"\n{e}') from None
 
 def gfal_ls(path, voms_token=None, catch_stderr=False, verbose=1):
   voms_token = get_voms_proxy_token(voms_token)
@@ -177,7 +177,7 @@ def gfal_ls(path, voms_token=None, catch_stderr=False, verbose=1):
                            shell=False, env=gfal_env(voms_token), catch_stdout=True,
                            catch_stderr=catch_stderr, split='\n', verbose=verbose)
   except PsCallError as e:
-    raise GfalError(f'gfal_ls: unable to list "{path}"\n{e}')
+    raise GfalError(f'gfal_ls: unable to list "{path}"\n{e}') from None
   files = []
   for line in output:
     if len(line) == 0: continue
@@ -240,10 +240,10 @@ def gfal_sum(path, voms_token=None, sum_type='adler32'):
     sum_str = output.split(' ')[-1]
     sum_int = int(sum_str, 16)
   except PsCallError as e:
-    raise GfalError(f'gfal_sum: unable to get {sum_type} for "{path}"\n{e}')
+    raise GfalError(f'gfal_sum: unable to get {sum_type} for "{path}"\n{e}') from None
   except ValueError as e:
     raise GfalError(f'gfal_sum: unable to parse {sum_type} for "{path}".'
-                    f'\ngfal-sum output:\n--------\n{output}--------\n{e}')
+                    f'\ngfal-sum output:\n--------\n{output}--------\n{e}') from None
   return sum_int
 
 def gfal_rm(path, voms_token=None, recursive=False, verbose=0, timeout=1800):
@@ -255,7 +255,7 @@ def gfal_rm(path, voms_token=None, recursive=False, verbose=0, timeout=1800):
   try:
     ps_call(cmd, shell=False, env=gfal_env(voms_token), catch_stdout=(verbose==0), verbose=verbose)
   except PsCallError as e:
-    raise GfalError(f'gfal_rm: unable to remove "{path}"\n{e}')
+    raise GfalError(f'gfal_rm: unable to remove "{path}"\n{e}') from None
 
 def gfal_rm_recursive(path, voms_token=None, timeout=86400):
   gfal_rm(path, voms_token=voms_token, recursive=True, verbose=1, timeout=timeout)
@@ -265,7 +265,7 @@ def gfal_rename(path, new_path, voms_token=None):
   try:
     ps_call(['gfal-rename', path, new_path], shell=False, env=gfal_env(voms_token), catch_stdout=True)
   except PsCallError as e:
-    raise GfalError(f'gfal_rename: unable to rename "{path}" to "{new_path}"\n{e}')
+    raise GfalError(f'gfal_rename: unable to rename "{path}" to "{new_path}"\n{e}') from None
 
 def lfn_to_pfn(server, lfn):
   from rucio.client import Client
