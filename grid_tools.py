@@ -181,7 +181,7 @@ def gfal_ls(path, voms_token=None, catch_stderr=False, verbose=1):
   files = []
   for line in output:
     if len(line) == 0: continue
-    items = re.match('^([rwx\-d]+) +[0-9]+ +[0-9]+ +[0-9]+ +([0-9]+) +([0-9\-]+ [0-9:]+) +(.*)$', line)
+    items = re.match(r'^([rwx\-d]+) +[0-9]+ +[0-9]+ +[0-9]+ +([0-9]+) +([0-9\-]+ [0-9:]+) +(.*)$', line)
     if items is None:
       raise GfalError(f'gfal_ls: unable to parse "{line}"')
     file = FileInfo()
