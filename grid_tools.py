@@ -214,7 +214,12 @@ def gfal_ls_safe(path, voms_token=None, catch_stderr=False, verbose=1):
     return None
 
 def gfal_exists(path, voms_token=None):
-  return gfal_ls_safe(path, voms_token=voms_token, catch_stderr=True, verbose=0) is not None
+  voms_token = get_voms_proxy_token(voms_token)
+  try:
+    ps_call(['gfal-stat', path ], shell=False, env=gfal_env(voms_token), catch_stdout=True, catch_stderr=True)
+  except PsCallError as e:
+    return False
+  return True
 
 def gfal_check_write(path, return_exception=False, voms_token=None, verbose=0):
   voms_token = get_voms_proxy_token(voms_token)

@@ -17,16 +17,17 @@ from .law_gfal import GFALFileInterface
 from .law_das import DASFileInterface
 from .grid_tools import path_to_pfn
 
-
 class WLCGFileSystem(RemoteFileSystem):
-  def __init__(self, base, ls_cache_validity_period=60):
+  def __init__(self, base, local_path_cache_validity_period=600, path_cache_host=None, path_cache_port=None, verbose=0):
     if base == "DAS":
       file_interface = DASFileInterface()
     else:
       if type(base) is str:
         base = [base]
       base_pfns = [path_to_pfn(b) for b in base]
-      file_interface = GFALFileInterface(base_pfns)
+      file_interface = GFALFileInterface(base_pfns, local_path_cache_validity_period=local_path_cache_validity_period,
+                                         path_cache_host=path_cache_host, path_cache_port=path_cache_port,
+                                         verbose=verbose)
     super(WLCGFileSystem, self).__init__(file_interface)
 
 class WLCGTarget(RemoteTarget):
