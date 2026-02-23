@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import traceback
 import zlib
@@ -192,6 +193,33 @@ def natural_sort(l):
   convert = lambda text: int(text) if text.isdigit() else text.lower()
   alphanum_key = lambda key: [convert(c) for c in re.split('([0-9]+)', key)]
   return sorted(l, key=alphanum_key)
+
+def check_root_file_integrity(file_name, tmp_file=None, verbose=1):
+  if tmp_file is None:
+    tmp_file_desc, tmp_file = tempfile.mkstemp()
+    os.close(tmp_file_desc)
+  try:
+    ret_code, std_out, std_err = ps_call(['hadd', '-f', '-O', tmp_file, file_name],
+                                         catch_stderr=True, catch_stdout=True,
+                                         decode=True, split='\n',
+                                         verbose=verbose)
+    all_ok = True
+    for line in std_err:
+      if line.lower().startswith('error'):
+        all_ok = False
+        if verbose > 0:
+          print(line, file=sys.stderr)
+        else:
+          break
+    return all_ok
+  except PsCallError as e:
+    if verbose > 0:
+      print(f'Error while checking integrity of {file_name}: {e}', file=sys.stderr)
+    return False
+  finally:
+    if os.path.exists(tmp_file):
+      os.remove(tmp_file)
+
 
 if __name__ == "__main__":
   import sys
