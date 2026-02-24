@@ -3,7 +3,7 @@ import os
 import sys
 
 from law.target.remote.interface import RemoteFileInterface
-from .grid_tools import get_voms_proxy_info, GfalError, gfal_copy_safe, gfal_ls_safe, gfal_rm
+from .grid_tools import get_voms_proxy_info, GfalError, gfal_copy_safe, gfal_ls_safe, gfal_rm, gfal_stat
 from .run_tools import repeat_until_success
 from .pathCacheClient import set_status as set_remote_cache_status, get_status as get_remote_cache_status
 
@@ -202,7 +202,8 @@ class GFALFileInterface(RemoteFileInterface):
     return True
 
   def isdir(self, path, **kwargs):
-    return True
+    stat = gfal_stat(path, voms_token=self.voms_token)
+    return stat["type"] == "directory"
 
   def isfile(self):
     self._raise_not_implemented('isfile')

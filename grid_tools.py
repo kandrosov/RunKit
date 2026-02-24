@@ -114,7 +114,9 @@ def gfal_copy_safe(input_file, output_file, voms_token=None, number_of_streams=2
   voms_token = get_voms_proxy_token(voms_token)
   if expected_adler32sum is None:
     try:
-      expected_adler32sum = gfal_sum(input_file, voms_token=voms_token, sum_type='adler32')
+      stat = gfal_stat(input_file, voms_token=voms_token)
+      if stat['type'] == 'regular file':
+        expected_adler32sum = gfal_sum(input_file, voms_token=voms_token, sum_type='adler32')
     except GfalError as e:
       if verbose > 0:
         print(f'WARNING: gfal_sum failed for "{input_file}".\n{e}')
@@ -160,7 +162,7 @@ def gfal_copy(input_file, output_file, voms_token=None, number_of_streams=2, tim
   voms_token = get_voms_proxy_token(voms_token)
   try:
     catch_output = verbose == 0
-    cmd = [ 'gfal-copy', '--parent', '--nbstreams', str(number_of_streams), '--timeout', str(timeout) ]
+    cmd = [ 'gfal-copy', '--parent', '--recursive', '--nbstreams', str(number_of_streams), '--timeout', str(timeout) ]
     if verbose > 1:
       n_v = min(3, verbose-1)
       cmd.append('-' + 'v' * n_v)
@@ -212,6 +214,21 @@ def gfal_ls_safe(path, voms_token=None, catch_stderr=False, verbose=1):
     return gfal_ls(path, voms_token=voms_token, catch_stderr=catch_stderr, verbose=verbose)
   except GfalError:
     return None
+
+def gfal_stat(path, voms_token=None):
+  voms_token = get_voms_proxy_token(voms_token)
+  result = { "size": None, "type": None }
+  try:
+    _, stdout, _ = ps_call(['gfal-stat', path ], shell=False, env=gfal_env(voms_token), catch_stdout=True, catch_stderr=True, decode=True, split='\n')
+
+    if len(stdout) > 1:
+      match = re.match(r"  Size: ([0-9]+) *(.+)", stdout[1])
+      if match is not None:
+        result["size"] = int(match.group(1))
+        result["type"] = match.group(2).strip()
+  except PsCallError as e:
+    pass
+  return result
 
 def gfal_exists(path, voms_token=None):
   voms_token = get_voms_proxy_token(voms_token)
