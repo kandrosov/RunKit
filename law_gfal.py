@@ -3,7 +3,7 @@ import os
 import sys
 
 from law.target.remote.interface import RemoteFileInterface
-from .grid_tools import get_voms_proxy_info, GfalError, gfal_copy_safe, gfal_ls_safe, gfal_rm, gfal_stat
+from .grid_tools import get_voms_proxy_info, GfalError, gfal_copy_safe, gfal_ls_safe, gfal_rm, gfal_stat, gfal_exists
 from .run_tools import repeat_until_success
 from .pathCacheClient import set_status as set_remote_cache_status, get_status as get_remote_cache_status
 
@@ -137,7 +137,8 @@ class GFALFileInterface(RemoteFileInterface):
     if self.verbose > 0:
       print(f'GFALFileInterface.remove: cnt={GFALFileInterface.remove_counter} path={path}', file=sys.stderr)
     try:
-      gfal_rm(path_uri, voms_token=self.voms_token, recursive=True)
+      if gfal_exists(path_uri, voms_token=self.voms_token):
+        gfal_rm(path_uri, voms_token=self.voms_token, recursive=True)
       self.path_cache.set(path_uri, False)
       return True
     except GfalError as e:
