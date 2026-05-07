@@ -1,17 +1,15 @@
 import datetime
 import os
 from law.target.remote.interface import RemoteFileInterface
-from .grid_tools import get_voms_proxy_info, copy_remote_file, das_file_pfns, run_dasgoclient
-from .run_tools import repeat_until_success
-from .getFileRunLumi import getFileRunLumi
+from .grid_tools import get_voms_proxy_info, copy_remote_file, run_dasgoclient
 
 class DASFileInterface(RemoteFileInterface):
   local_prefix = 'file://'
 
   def __init__(self, *, ls_cache_validity_period=60):
     self.voms_token = get_voms_proxy_info()['path']
-    self.dataset_files = {}
     self.dataset_available_files = {}
+    self.dataset_file_records = {}
     super(DASFileInterface, self).__init__(base=["/"])
 
   def is_local(self, path):
@@ -73,11 +71,28 @@ class DASFileInterface(RemoteFileInterface):
       self.dataset_available_files[dataset] = available_files
     return file in self.dataset_available_files[dataset]
 
+  def file_records(self, dataset, verbose=0):
+    if dataset not in self.dataset_file_records:
+      output = run_dasgoclient(f'file dataset={dataset}', inputDBS="global", json_output=True, verbose=verbose)
+      file_records = {}
+      for entry in output:
+        if 'file' not in entry:
+          continue
+        for file_entry in entry['file']:
+          file_name = file_entry['name']
+          file_records[file_name] = file_entry
+      self.dataset_file_records[dataset] = file_records
+    return self.dataset_file_records[dataset]
+
+  def n_events(self, dataset, file, verbose=0):
+    file_records = self.file_records(dataset, verbose=verbose)
+    if file not in file_records:
+      raise RuntimeError(f'File "{file}" record not found in dataset "{dataset}"')
+    return file_records[file]['nevents']
 
   def listdir(self, path, base=None, silent=False, **kwargs):
-    if path not in self.dataset_files:
-      self.dataset_files[path] = getFileRunLumi(path)
-    return list(self.dataset_files[path].keys())
+    file_records = self.file_records(path, verbose=0)
+    return list(file_records.keys())
 
   @staticmethod
   def _raise_not_implemented(method_name):
