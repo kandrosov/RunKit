@@ -278,7 +278,7 @@ class LogEntryParser:
 
     runtime_str = log_lines[n + 2].strip()
     time_re = '-*([0-9]+:[0-9]+:[0-9]+)'
-    runtime_re = f'^\* Runtime: {time_re} min, {time_re} max, {time_re} ave$'
+    runtime_re = rf'^\* Runtime: {time_re} min, {time_re} max, {time_re} ave$'
     match = re.match(runtime_re, runtime_str)
     if match is None:
       raise RuntimeError(f'Invalid runtime stat = "{runtime_str}"')
